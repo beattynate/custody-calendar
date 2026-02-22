@@ -1,0 +1,5 @@
+services/api/.idea
+services/api/target
+dev/jwt/private-key.json
+apps/web/node_modules
+apps/web/dist
