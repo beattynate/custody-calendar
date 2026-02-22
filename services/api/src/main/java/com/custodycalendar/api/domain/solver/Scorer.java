@@ -1,19 +1,22 @@
 package com.custodycalendar.api.domain.solver;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import com.custodycalendar.api.config.SchoolNightProperties;
 import org.springframework.stereotype.Component;
 
 @Component
 public class Scorer {
 
-    private static final LocalDate SCHOOL_START = LocalDate.of(2025, 8, 4);
-    private static final LocalDate SCHOOL_END = LocalDate.of(2026, 5, 25);
+    private final SchoolNightProperties schoolNightProperties;
+
+    public Scorer(SchoolNightProperties schoolNightProperties) {
+        this.schoolNightProperties = schoolNightProperties;
+    }
 
     public ScoreResult score(
             ScheduleAssignmentSet candidate,
@@ -83,14 +86,7 @@ public class Scorer {
     }
 
     private boolean isSchoolNightTransition(LocalDate nextDate) {
-        if (nextDate.isBefore(SCHOOL_START) || nextDate.isAfter(SCHOOL_END)) {
-            return false;
-        }
-        DayOfWeek next = nextDate.getDayOfWeek();
-        return next == DayOfWeek.MONDAY
-                || next == DayOfWeek.TUESDAY
-                || next == DayOfWeek.WEDNESDAY
-                || next == DayOfWeek.THURSDAY;
+        return schoolNightProperties.isSchoolNight(nextDate);
     }
 
     private boolean isWeekendAnchor(LocalDate date) {
