@@ -70,6 +70,19 @@ public class ScheduleSolveService {
         ScheduleAssignmentSet baseline = baselineScheduleGenerator.generate(rule, command.horizonStart(), command.horizonEnd());
         ScheduleAssignmentSet lockedBaseline = lockedEventApplier.applyLockedEvents(baseline, events);
 
+        if (command.newEvent() == null) {
+            Scorer.ScoreResult score = scorer.score(lockedBaseline, baseline, lockedBaseline, command.weights());
+            SolveOptionResult option = new SolveOptionResult(
+                    "A",
+                    score.total(),
+                    score.breakdown(),
+                    List.of("Baseline only"),
+                    diffChangedDays(baseline, lockedBaseline),
+                    List.of(),
+                    lockedBaseline);
+            return new SolveComputationResult(List.of(option));
+        }
+
         List<MoveGenerator.GeneratedCandidate> generatedCandidates = moveGenerator.generateCandidates(
                 lockedBaseline,
                 command.newEvent(),
@@ -83,6 +96,10 @@ public class ScheduleSolveService {
                     lockedBaseline,
                     command.constraints());
             if (!validation.valid()) {
+                if (command.newEvent() == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Baseline violates constraints: " + String.join("; ", validation.violations()));
+                }
                 continue;
             }
 
