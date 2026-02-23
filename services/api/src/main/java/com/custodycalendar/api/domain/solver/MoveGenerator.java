@@ -2,19 +2,21 @@ package com.custodycalendar.api.domain.solver;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 @Component
 public class MoveGenerator {
 
     private final LockedEventApplier lockedEventApplier;
+    private final ScheduleRunHelper scheduleRunHelper;
 
-    public MoveGenerator(LockedEventApplier lockedEventApplier) {
+    public MoveGenerator(LockedEventApplier lockedEventApplier, ScheduleRunHelper scheduleRunHelper) {
         this.lockedEventApplier = lockedEventApplier;
+        this.scheduleRunHelper = scheduleRunHelper;
     }
 
     public List<GeneratedCandidate> generateCandidates(
@@ -56,6 +58,8 @@ public class MoveGenerator {
                             List.of("Shift vacation window by start=" + startShift + ", end=" + endShift),
                             variant));
                 }
+
+                addOneDayRunRepairs(candidate, seen, generated, variant);
             }
         }
 
@@ -88,9 +92,51 @@ public class MoveGenerator {
                             requestedEvent));
                 }
             }
+
+            addOneDayRunRepairs(candidate, seen, generated, requestedEvent);
         }
 
         return generated;
+    }
+
+    private void addOneDayRunRepairs(
+            ScheduleAssignmentSet candidate,
+            Set<String> seen,
+            List<GeneratedCandidate> generated,
+            RequestedScheduleEvent requestedEvent) {
+        for (ScheduleRun run : scheduleRunHelper.deriveRuns(candidate)) {
+            if (run.lengthDays() != 1) {
+                continue;
+            }
+            LocalDate date = run.startDate();
+            ScheduleAssignmentSet.DayAssignment current = candidate.get(date);
+            if (current == null || current.isLocked()) {
+                continue;
+            }
+
+            UUID replacement = null;
+            LocalDate prev = date.minusDays(1);
+            LocalDate next = date.plusDays(1);
+            if (candidate.containsDate(prev)) {
+                replacement = candidate.get(prev).assignedParentId();
+            } else if (candidate.containsDate(next)) {
+                replacement = candidate.get(next).assignedParentId();
+            }
+
+            if (replacement == null || replacement.equals(current.assignedParentId())) {
+                continue;
+            }
+
+            ScheduleAssignmentSet repaired = candidate.copy();
+            repaired.put(date, current.withAssignedParentId(replacement, current.derivedFrom()));
+            String signature = repaired.signature();
+            if (seen.add(signature)) {
+                generated.add(new GeneratedCandidate(
+                        repaired,
+                        List.of("Repair single-day run on " + date),
+                        requestedEvent));
+            }
+        }
     }
 
     public record GeneratedCandidate(
