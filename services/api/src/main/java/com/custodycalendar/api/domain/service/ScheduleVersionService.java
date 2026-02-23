@@ -142,12 +142,16 @@ public class ScheduleVersionService {
         preferences.put("horizon", Map.of(
                 "start", command.horizonStart().toString(),
                 "end", command.horizonEnd().toString()));
-        preferences.put("newEvent", Map.of(
-                "title", command.newEvent().title(),
-                "startDate", command.newEvent().startDate().toString(),
-                "endDate", command.newEvent().endDate().toString(),
-                "parentId", command.newEvent().parentId().toString(),
-                "locked", command.newEvent().locked()));
+        if (command.newEvent() != null) {
+            preferences.put("newEvent", Map.of(
+                    "title", command.newEvent().title(),
+                    "startDate", command.newEvent().startDate().toString(),
+                    "endDate", command.newEvent().endDate().toString(),
+                    "parentId", command.newEvent().parentId().toString(),
+                    "locked", command.newEvent().locked()));
+        } else {
+            preferences.put("newEvent", null);
+        }
 
         try {
             return objectMapper.writeValueAsString(preferences);
