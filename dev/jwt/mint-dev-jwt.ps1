@@ -68,6 +68,10 @@ try {
     $privateObj | ConvertTo-Json -Depth 5 | Set-Content -Path $privatePath -Encoding utf8
 }
 
+$jwksObj = @{ keys = @(@{ kty = "RSA"; use = "sig"; alg = "RS256"; kid = $privateObj.kid; n = $privateObj.n; e = $privateObj.e }) }
+$jwksObj | ConvertTo-Json -Depth 5 | Set-Content -Path $jwksPath -Encoding utf8
+$jwksObj | ConvertTo-Json -Depth 5 | Set-Content -Path $resourceJwksPath -Encoding utf8
+
 $header = @{
     alg = "RS256"
     typ = "JWT"

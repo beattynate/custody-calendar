@@ -1,27 +1,29 @@
 package com.custodycalendar.api.web;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 @RestController
 public class DevJwksController {
 
     private final boolean enabled;
-    private final Resource jwksResource;
+    private final Path jwksPath;
 
     public DevJwksController(
             @Value("${app.security.dev-jwks.enabled:false}") boolean enabled,
-            @Value("classpath:dev/jwks.json") Resource jwksResource) {
+            @Value("${app.security.dev-jwks.path:${user.dir}/dev/jwt/jwks.json}") String jwksPath) {
         this.enabled = enabled;
-        this.jwksResource = jwksResource;
+        this.jwksPath = Paths.get(jwksPath);
     }
 
     @GetMapping(value = "/dev/jwks", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -30,7 +32,7 @@ public class DevJwksController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         try {
-            String json = new String(jwksResource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String json = Files.readString(jwksPath, StandardCharsets.UTF_8);
             return ResponseEntity.ok(json);
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "JWKS not available");
