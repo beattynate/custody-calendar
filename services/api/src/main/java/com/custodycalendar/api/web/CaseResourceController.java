@@ -25,8 +25,10 @@ import com.custodycalendar.api.web.dto.CreateChildRequest;
 import com.custodycalendar.api.web.dto.CreateEventRequest;
 import com.custodycalendar.api.web.dto.EventResponse;
 import com.custodycalendar.api.web.dto.LedgerImpactResponse;
+import com.custodycalendar.api.web.dto.OwedBalanceResponse;
 import com.custodycalendar.api.web.dto.ScheduleRuleResponse;
 import com.custodycalendar.api.web.dto.ScheduleDayResponse;
+import com.custodycalendar.api.web.dto.ScoreComponentResponse;
 import com.custodycalendar.api.web.dto.SchoolCalendarDayRequest;
 import com.custodycalendar.api.web.dto.SchoolCalendarDayResponse;
 import com.custodycalendar.api.web.dto.SchoolCalendarBulkRequest;
@@ -181,12 +183,32 @@ public class CaseResourceController {
                         option.optionId(),
                         option.scoreTotal(),
                         option.scoreBreakdown(),
+                        option.scoreDetails().entrySet().stream()
+                                .collect(java.util.stream.Collectors.toMap(
+                                        java.util.Map.Entry::getKey,
+                                        e -> new ScoreComponentResponse(
+                                                e.getValue().key(),
+                                                e.getValue().count(),
+                                                e.getValue().weight(),
+                                                e.getValue().score()))),
                         option.patchOperations(),
                         option.changedDays().stream()
                                 .map(d -> new ChangedDayResponse(d.date(), d.fromParentId(), d.toParentId()))
                                 .toList(),
                         option.ledgerImpact().stream()
-                                .map(l -> new LedgerImpactResponse(l.fromParentId(), l.toParentId(), l.amountDays(), l.reason()))
+                                .map(l -> new LedgerImpactResponse(
+                                        l.fromParentId(),
+                                        l.toParentId(),
+                                        l.amountDays(),
+                                        l.reason(),
+                                        l.dayBucket()))
+                                .toList(),
+                        option.owedBalances().stream()
+                                .map(b -> new OwedBalanceResponse(
+                                        b.fromParentId(),
+                                        b.toParentId(),
+                                        b.amountDays(),
+                                        b.dayBucket()))
                                 .toList()))
                 .toList());
     }
@@ -341,7 +363,8 @@ public class CaseResourceController {
                                 valueOrDefault(request.weights().schoolNightTransitionPenalty(), defaultWeights.schoolNightTransitionPenalty()),
                                 valueOrDefault(request.weights().parityDriftPenalty(), defaultWeights.parityDriftPenalty()),
                                 valueOrDefault(request.weights().lockedProximityPenalty(), defaultWeights.lockedProximityPenalty()),
-                                valueOrDefault(request.weights().owedImbalancePenalty(), defaultWeights.owedImbalancePenalty())));
+                                valueOrDefault(request.weights().owedImbalancePenalty(), defaultWeights.owedImbalancePenalty()),
+                                valueOrDefault(request.weights().runDaysOverThreePenalty(), defaultWeights.runDaysOverThreePenalty())));
     }
 
     private int valueOrDefault(Integer value, int defaultValue) {

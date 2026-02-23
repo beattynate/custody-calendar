@@ -5,9 +5,10 @@ public record SolverWeights(
         int schoolNightTransitionPenalty,
         int parityDriftPenalty,
         int lockedProximityPenalty,
-        int owedImbalancePenalty
+        int owedImbalancePenalty,
+        int runDaysOverThreePenalty
 ) {
     public static SolverWeights defaults() {
-        return new SolverWeights(50, 30, 40, 100, 5);
+        return new SolverWeights(50, 30, 40, 100, 5, 10);
     }
 }

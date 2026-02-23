@@ -1,6 +1,7 @@
 package com.custodycalendar.api.domain.service;
 
 import com.custodycalendar.api.domain.model.LedgerEntry;
+import com.custodycalendar.api.domain.model.LedgerDayBucket;
 import com.custodycalendar.api.domain.model.LedgerReasonType;
 import com.custodycalendar.api.domain.model.Person;
 import com.custodycalendar.api.domain.model.ScheduleDay;
@@ -127,7 +128,9 @@ public class ScheduleVersionService {
         preferences.put("optionId", selected.optionId());
         preferences.put("scoreTotal", selected.scoreTotal());
         preferences.put("scoreBreakdown", selected.scoreBreakdown());
+        preferences.put("scoreDetails", selected.scoreDetails());
         preferences.put("changedDays", selected.changedDays());
+        preferences.put("owedBalances", selected.owedBalances());
         preferences.put("patchOperations", selected.patchOperations());
         preferences.put("constraints", Map.of(
                 "minRunDays", command.constraints().minRunDays(),
@@ -138,7 +141,8 @@ public class ScheduleVersionService {
                 "schoolNightTransitionPenalty", command.weights().schoolNightTransitionPenalty(),
                 "parityDriftPenalty", command.weights().parityDriftPenalty(),
                 "lockedProximityPenalty", command.weights().lockedProximityPenalty(),
-                "owedImbalancePenalty", command.weights().owedImbalancePenalty()));
+                "owedImbalancePenalty", command.weights().owedImbalancePenalty(),
+                "runDaysOverThreePenalty", command.weights().runDaysOverThreePenalty()));
         preferences.put("horizon", Map.of(
                 "start", command.horizonStart().toString(),
                 "end", command.horizonEnd().toString()));
@@ -191,6 +195,9 @@ public class ScheduleVersionService {
             entry.setToParentId(impact.toParentId());
             entry.setAmountDays(impact.amountDays());
             entry.setReasonType(toLedgerReasonType(impact.reason()));
+            if (impact.dayBucket() != null && !impact.dayBucket().isBlank()) {
+                entry.setDayBucket(LedgerDayBucket.valueOf(impact.dayBucket()));
+            }
             entry.setVersionId(versionId);
             entry.setNotes(impact.reason());
             entries.add(entry);

@@ -5,6 +5,7 @@ public record SolveWeightsRequest(
         Integer schoolNightTransitionPenalty,
         Integer parityDriftPenalty,
         Integer lockedProximityPenalty,
-        Integer owedImbalancePenalty
+        Integer owedImbalancePenalty,
+        Integer runDaysOverThreePenalty
 ) {
 }

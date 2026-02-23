@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Collections;
 import java.util.Set;
 import java.util.UUID;
 import com.custodycalendar.api.config.SchoolNightProperties;
@@ -24,17 +25,24 @@ public class Scorer {
             ScheduleAssignmentSet baseline,
             ScheduleAssignmentSet lockedBaseline,
             SolverWeights weights) {
+        return score(candidate, baseline, lockedBaseline, weights, 0, Collections.emptySet());
+    }
+
+    public ScoreResult score(
+            ScheduleAssignmentSet candidate,
+            ScheduleAssignmentSet baseline,
+            ScheduleAssignmentSet lockedBaseline,
+            SolverWeights weights,
+            int owedImbalanceDays,
+            Set<LocalDate> transitionExcludedDates) {
         int transitions = 0;
         int schoolNightTransitions = 0;
         int parityDrift = 0;
         int lockedProximityChanges = 0;
-        int owedImbalanceDays;
+        int runDaysOverThree = 0;
 
         UUID previous = null;
-        LocalDate previousDate = null;
-        int candidateParentADays = 0;
-        int baselineParentADays = 0;
-        UUID baselineParentA = baseline.days().firstEntry().getValue().assignedParentId();
+        int currentRunLength = 0;
 
         Set<LocalDate> lockedDays = new HashSet<>();
         for (var entry : lockedBaseline.days().entrySet()) {
@@ -47,14 +55,17 @@ public class Scorer {
             LocalDate date = entry.getKey();
             UUID candidateParent = entry.getValue().assignedParentId();
             UUID baselineParent = baseline.get(date).assignedParentId();
-            if (candidateParent.equals(baselineParentA)) {
-                candidateParentADays++;
-            }
-            if (baselineParent.equals(baselineParentA)) {
-                baselineParentADays++;
+
+            if (previous == null || previous.equals(candidateParent)) {
+                currentRunLength++;
+            } else {
+                runDaysOverThree += Math.max(0, currentRunLength - 3);
+                currentRunLength = 1;
             }
 
-            if (previous != null && !previous.equals(candidateParent)) {
+            if (previous != null
+                    && !previous.equals(candidateParent)
+                    && (transitionExcludedDates == null || !transitionExcludedDates.contains(date))) {
                 transitions++;
                 if (isSchoolNightTransition(date)) {
                     schoolNightTransitions++;
@@ -70,20 +81,20 @@ public class Scorer {
             }
 
             previous = candidateParent;
-            previousDate = date;
         }
-
-        owedImbalanceDays = Math.abs(candidateParentADays - baselineParentADays);
+        runDaysOverThree += Math.max(0, currentRunLength - 3);
 
         Map<String, Integer> breakdown = new HashMap<>();
-        breakdown.put("transitions", transitions * weights.transitionPenalty());
-        breakdown.put("schoolNightTransitions", schoolNightTransitions * weights.schoolNightTransitionPenalty());
-        breakdown.put("parityDrift", parityDrift * weights.parityDriftPenalty());
-        breakdown.put("lockedProximity", lockedProximityChanges * weights.lockedProximityPenalty());
-        breakdown.put("owedImbalance", owedImbalanceDays * weights.owedImbalancePenalty());
+        Map<String, SolveOptionResult.ScoreComponent> details = new HashMap<>();
+        putComponent(details, breakdown, "transitions", transitions, weights.transitionPenalty());
+        putComponent(details, breakdown, "schoolNightTransitions", schoolNightTransitions, weights.schoolNightTransitionPenalty());
+        putComponent(details, breakdown, "parityDrift", parityDrift, weights.parityDriftPenalty());
+        putComponent(details, breakdown, "lockedProximity", lockedProximityChanges, weights.lockedProximityPenalty());
+        putComponent(details, breakdown, "owedImbalance", owedImbalanceDays, weights.owedImbalancePenalty());
+        putComponent(details, breakdown, "runDaysOverThree", runDaysOverThree, weights.runDaysOverThreePenalty());
 
         int total = breakdown.values().stream().mapToInt(Integer::intValue).sum();
-        return new ScoreResult(total, Map.copyOf(breakdown));
+        return new ScoreResult(total, Map.copyOf(breakdown), Map.copyOf(details));
     }
 
     private boolean isSchoolNightTransition(LocalDate nextDate) {
@@ -103,6 +114,20 @@ public class Scorer {
         return false;
     }
 
-    public record ScoreResult(int total, Map<String, Integer> breakdown) {
+    private void putComponent(
+            Map<String, SolveOptionResult.ScoreComponent> details,
+            Map<String, Integer> breakdown,
+            String key,
+            int count,
+            int weight) {
+        int score = count * weight;
+        breakdown.put(key, score);
+        details.put(key, new SolveOptionResult.ScoreComponent(key, count, weight, score));
+    }
+
+    public record ScoreResult(
+            int total,
+            Map<String, Integer> breakdown,
+            Map<String, SolveOptionResult.ScoreComponent> details) {
     }
 }

@@ -104,11 +104,17 @@ public class MoveGenerator {
             Set<String> seen,
             List<GeneratedCandidate> generated,
             RequestedScheduleEvent requestedEvent) {
+        LocalDate horizonStart = candidate.days().isEmpty() ? null : candidate.days().firstKey();
+        LocalDate horizonEnd = candidate.days().isEmpty() ? null : candidate.days().lastKey();
         for (ScheduleRun run : scheduleRunHelper.deriveRuns(candidate)) {
             if (run.lengthDays() != 1) {
                 continue;
             }
             LocalDate date = run.startDate();
+            if ((horizonStart != null && date.equals(horizonStart))
+                    || (horizonEnd != null && date.equals(horizonEnd))) {
+                continue;
+            }
             ScheduleAssignmentSet.DayAssignment current = candidate.get(date);
             if (current == null || current.isLocked()) {
                 continue;

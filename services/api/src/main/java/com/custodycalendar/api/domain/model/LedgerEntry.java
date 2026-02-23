@@ -35,6 +35,10 @@ public class LedgerEntry {
     @Column(name = "reason_type", nullable = false)
     private LedgerReasonType reasonType;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "day_bucket")
+    private LedgerDayBucket dayBucket;
+
     @Column(name = "event_id")
     private UUID eventId;
 
@@ -98,6 +102,14 @@ public class LedgerEntry {
 
     public void setReasonType(LedgerReasonType reasonType) {
         this.reasonType = reasonType;
+    }
+
+    public LedgerDayBucket getDayBucket() {
+        return dayBucket;
+    }
+
+    public void setDayBucket(LedgerDayBucket dayBucket) {
+        this.dayBucket = dayBucket;
     }
 
     public UUID getEventId() {

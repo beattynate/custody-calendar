@@ -20,6 +20,8 @@ public class ConstraintValidator {
             ScheduleAssignmentSet lockedBaseline,
             SolverConstraints constraints) {
         List<String> violations = new ArrayList<>();
+        LocalDate horizonStart = candidate.days().isEmpty() ? null : candidate.days().firstKey();
+        LocalDate horizonEnd = candidate.days().isEmpty() ? null : candidate.days().lastKey();
 
         for (Map.Entry<LocalDate, ScheduleAssignmentSet.DayAssignment> entry : candidate.days().entrySet()) {
             if (entry.getValue() == null || entry.getValue().assignedParentId() == null) {
@@ -42,6 +44,11 @@ public class ConstraintValidator {
         }
 
         for (ScheduleRun run : runHelper.deriveRuns(candidate)) {
+            boolean touchesHorizonBoundary = (horizonStart != null && run.startDate().equals(horizonStart))
+                    || (horizonEnd != null && run.endDate().equals(horizonEnd));
+            if (touchesHorizonBoundary) {
+                continue;
+            }
             if (run.lengthDays() < constraints.minRunDays()) {
                 violations.add("Run shorter than minRunDays: " + run.startDate() + ".." + run.endDate());
             }

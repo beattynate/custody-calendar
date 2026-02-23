@@ -44,6 +44,28 @@ function formatMonthTitle(date) {
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
+function shortId(value) {
+  return value ? String(value).slice(0, 6) : "";
+}
+
+function labelScoreKey(key) {
+  const labels = {
+    transitions: "Transitions",
+    schoolNightTransitions: "School-night transitions",
+    parityDrift: "Weekend parity drift",
+    lockedProximity: "Changes near locked days",
+    owedImbalance: "Total owed days",
+    runDaysOverThree: "Run days over 3"
+  };
+  return labels[key] || key;
+}
+
+function formatDayBucket(bucket) {
+  if (bucket === "SCHOOL") return "school";
+  if (bucket === "NON_SCHOOL") return "non-school";
+  return (bucket || "").toLowerCase();
+}
+
 function getMonthGrid(date) {
   const start = startOfMonth(date);
   const end = endOfMonth(date);
@@ -185,6 +207,12 @@ export default function App() {
     }
   }, [activeTab, calendarMonth, settings.caseId]);
 
+  useEffect(() => {
+    if (activeTab === "Solve" && settings.caseId) {
+      withStatus("Loading members", loadMembers);
+    }
+  }, [activeTab, settings.caseId]);
+
   async function submitEvent(form) {
     await apiRequest(`/api/v1/cases/${settings.caseId}/events`, {
       ...settings,
@@ -195,6 +223,7 @@ export default function App() {
   }
 
   async function solveSchedule(form) {
+    await loadMembers();
     const payload = {
       baseVersionId: null,
       horizonStart: form.horizonStart,
@@ -249,6 +278,13 @@ export default function App() {
     });
     return map;
   }, [scheduleDays]);
+
+  function personLabel(personId) {
+    if (!personId) {
+      return "Unknown";
+    }
+    return memberMap.get(personId) || `Parent ${shortId(personId)}`;
+  }
 
   return (
     <div className="app">
@@ -417,12 +453,19 @@ export default function App() {
                   <div>
                     <h4>Score Breakdown</h4>
                     <ul>
-                      {Object.entries(option.scoreBreakdown || {}).map(([key, value]) => (
+                      {Object.entries(option.scoreDetails || {}).map(([key, detail]) => (
                         <li key={key}>
-                          <span>{key}</span>
-                          <span>{value}</span>
+                          <span>{labelScoreKey(key)} ({detail.count} x {detail.weight})</span>
+                          <span>{detail.score}</span>
                         </li>
                       ))}
+                      {(!option.scoreDetails || Object.keys(option.scoreDetails).length === 0) &&
+                        Object.entries(option.scoreBreakdown || {}).map(([key, value]) => (
+                          <li key={key}>
+                            <span>{labelScoreKey(key)}</span>
+                            <span>{value}</span>
+                          </li>
+                        ))}
                     </ul>
                   </div>
                   <div>
@@ -430,16 +473,32 @@ export default function App() {
                     <div className="chip-list">
                       {(option.changedDays || []).slice(0, 10).map(change => (
                         <span key={change.date} className="chip">
-                          {change.date} {change.fromParent?.slice(0, 6)} → {change.toParent?.slice(0, 6)}
+                          {change.date} {personLabel(change.fromParent)} -> {personLabel(change.toParent)}
                         </span>
                       ))}
                     </div>
                   </div>
                   <div>
+                    <h4>Owed Balances</h4>
+                    <div className="stack">
+                      {(option.owedBalances || []).length === 0 && <span>None</span>}
+                      {(option.owedBalances || []).map((balance, idx) => (
+                        <span key={`${option.optionId}-owed-${idx}`}>
+                          {personLabel(balance.fromParent)} owes {personLabel(balance.toParent)}{" "}
+                          {balance.amountDays} {formatDayBucket(balance.dayBucket)} day{balance.amountDays === 1 ? "" : "s"}
+                        </span>
+                      ))}
+                    </div>
                     <h4>Patch Operations</h4>
                     <div className="stack">
                       {(option.patchOperations || []).map((op, idx) => (
                         <span key={`${option.optionId}-${idx}`}>{op}</span>
+                      ))}
+                      {(option.ledgerImpact || []).map((impact, idx) => (
+                        <span key={`${option.optionId}-ledger-${idx}`}>
+                          Ledger: {personLabel(impact.fromParent)} owes {personLabel(impact.toParent)}{" "}
+                          {impact.amountDays} {formatDayBucket(impact.dayBucket)} day{impact.amountDays === 1 ? "" : "s"}
+                        </span>
                       ))}
                     </div>
                   </div>

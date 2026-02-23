@@ -14,7 +14,10 @@
    - `mvnw.cmd spring-boot:run` (PowerShell)
 3. OpenAPI JSON:
    - `http://localhost:8080/v3/api-docs`
+4. Optional stable local test seed (fixed case/member IDs):
+   - See `dev/README.md`
 
 ## Notes
 - Flyway migrations live in `services/api/src/main/resources/db/migration`.
 - JWT verification is configured as a resource server skeleton and expects a JWK set URI.
+- Local-only dev helpers (stable seed data, dev JWT minting) are documented in `dev/README.md`.

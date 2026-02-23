@@ -311,3 +311,4 @@ Returns assignments and markers for locked/events.
 - Solver improvements:
   - Use `school_calendar_days` explicitly for scoring instead of weekday heuristics
   - Option diversity controls and configurability of move sets
+  - Make long-run penalty threshold configurable (currently hardcoded as runs longer than 3 days)

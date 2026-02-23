@@ -31,7 +31,8 @@ public class SolverDefaultsProperties {
                 weights.getSchoolNightTransitionPenalty(),
                 weights.getParityDriftPenalty(),
                 weights.getLockedProximityPenalty(),
-                weights.getOwedImbalancePenalty());
+                weights.getOwedImbalancePenalty(),
+                weights.getRunDaysOverThreePenalty());
     }
 
     public static class Constraints {
@@ -70,6 +71,7 @@ public class SolverDefaultsProperties {
         private int parityDriftPenalty = 40;
         private int lockedProximityPenalty = 100;
         private int owedImbalancePenalty = 5;
+        private int runDaysOverThreePenalty = 10;
 
         public int getTransitionPenalty() {
             return transitionPenalty;
@@ -109,6 +111,14 @@ public class SolverDefaultsProperties {
 
         public void setOwedImbalancePenalty(int owedImbalancePenalty) {
             this.owedImbalancePenalty = owedImbalancePenalty;
+        }
+
+        public int getRunDaysOverThreePenalty() {
+            return runDaysOverThreePenalty;
+        }
+
+        public void setRunDaysOverThreePenalty(int runDaysOverThreePenalty) {
+            this.runDaysOverThreePenalty = runDaysOverThreePenalty;
         }
     }
 }
