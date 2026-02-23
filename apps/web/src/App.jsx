@@ -155,6 +155,21 @@ export default function App() {
     setSchoolDays(data);
   }
 
+  async function bulkGenerateSchoolDays(form) {
+    const payload = {
+      startDate: form.startDate,
+      endDate: form.endDate,
+      dayType: form.dayType,
+      daysOfWeek: form.daysOfWeek
+    };
+    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days/bulk`, {
+      ...settings,
+      method: "POST",
+      body: payload
+    });
+    setSchoolDays(data);
+  }
+
   async function refreshCalendar() {
     const from = toDateInput(startOfMonth(calendarMonth));
     const to = toDateInput(endOfMonth(calendarMonth));
@@ -376,7 +391,10 @@ export default function App() {
               ))}
             </div>
           </div>
-          <SchoolDayForm onSubmit={form => withStatus("Saving school day", () => upsertSchoolDay(form))} />
+          <div className="stacked-forms">
+            <SchoolDayForm onSubmit={form => withStatus("Saving school day", () => upsertSchoolDay(form))} />
+            <SchoolDayBulkForm onSubmit={form => withStatus("Generating school days", () => bulkGenerateSchoolDays(form))} />
+          </div>
         </section>
       )}
 
@@ -651,6 +669,73 @@ function SchoolDayForm({ onSubmit }) {
         </Field>
       </div>
       <button className="primary" onClick={() => onSubmit(form)}>Save Day</button>
+    </div>
+  );
+}
+
+function SchoolDayBulkForm({ onSubmit }) {
+  const [form, setForm] = useState({
+    startDate: "2025-08-04",
+    endDate: "2026-05-25",
+    dayType: "SCHOOL",
+    daysOfWeek: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"]
+  });
+
+  function toggleDay(day) {
+    const set = new Set(form.daysOfWeek);
+    if (set.has(day)) {
+      set.delete(day);
+    } else {
+      set.add(day);
+    }
+    setForm({ ...form, daysOfWeek: Array.from(set) });
+  }
+
+  const dayOptions = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+
+  return (
+    <div className="panel form">
+      <h2>Bulk Generate</h2>
+      <div className="form-grid">
+        <Field label="Start Date">
+          <input
+            type="date"
+            value={form.startDate}
+            onChange={event => setForm({ ...form, startDate: event.target.value })}
+          />
+        </Field>
+        <Field label="End Date">
+          <input
+            type="date"
+            value={form.endDate}
+            onChange={event => setForm({ ...form, endDate: event.target.value })}
+          />
+        </Field>
+        <Field label="Day Type">
+          <select value={form.dayType} onChange={event => setForm({ ...form, dayType: event.target.value })}>
+            <option value="SCHOOL">School</option>
+            <option value="BREAK">Break</option>
+            <option value="WEEKEND">Weekend</option>
+            <option value="HOLIDAY">Holiday</option>
+            <option value="IN_SERVICE">In Service</option>
+          </select>
+        </Field>
+        <Field label="Days Of Week">
+          <div className="day-toggle-grid">
+            {dayOptions.map(day => (
+              <label key={day} className={`day-toggle ${form.daysOfWeek.includes(day) ? "active" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={form.daysOfWeek.includes(day)}
+                  onChange={() => toggleDay(day)}
+                />
+                <span>{day.slice(0, 3)}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      </div>
+      <button className="primary" onClick={() => onSubmit(form)}>Generate Days</button>
     </div>
   );
 }

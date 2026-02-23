@@ -322,6 +322,42 @@ button:hover {
   color: var(--muted);
 }
 
+.stacked-forms {
+  display: grid;
+  gap: 16px;
+}
+
+.day-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  gap: 6px;
+}
+
+.day-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.day-toggle input {
+  display: none;
+}
+
+.day-toggle.active {
+  border-color: var(--accent);
+  color: #0c0f14;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+}
+
 .option-actions {
   margin-top: 12px;
   display: flex;
