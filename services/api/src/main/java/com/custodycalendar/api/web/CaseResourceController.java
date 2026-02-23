@@ -29,6 +29,7 @@ import com.custodycalendar.api.web.dto.ScheduleRuleResponse;
 import com.custodycalendar.api.web.dto.ScheduleDayResponse;
 import com.custodycalendar.api.web.dto.SchoolCalendarDayRequest;
 import com.custodycalendar.api.web.dto.SchoolCalendarDayResponse;
+import com.custodycalendar.api.web.dto.SchoolCalendarBulkRequest;
 import com.custodycalendar.api.web.dto.SolveOptionResponse;
 import com.custodycalendar.api.web.dto.SolveScheduleRequest;
 import com.custodycalendar.api.web.dto.SolveScheduleResponse;
@@ -251,6 +252,19 @@ public class CaseResourceController {
             @PathVariable UUID caseId,
             @Valid @RequestBody List<SchoolCalendarDayRequest> request) {
         return schoolCalendarService.upsertDays(caseId, request).stream()
+                .map(day -> new SchoolCalendarDayResponse(
+                        day.getId().getDate(),
+                        day.getDayType()))
+                .toList();
+    }
+
+    @PostMapping("/school-calendar-days/bulk")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<SchoolCalendarDayResponse> bulkGenerateSchoolCalendarDays(
+            @PathVariable UUID caseId,
+            @Valid @RequestBody SchoolCalendarBulkRequest request) {
+        return schoolCalendarService.bulkGenerate(caseId, request).stream()
                 .map(day -> new SchoolCalendarDayResponse(
                         day.getId().getDate(),
                         day.getDayType()))
