@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import org.springframework.core.io.ClassPathResource;
 
 @RestController
 public class DevJwksController {
@@ -32,7 +33,13 @@ public class DevJwksController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         try {
-            String json = Files.readString(jwksPath, StandardCharsets.UTF_8);
+            String json;
+            if (Files.exists(jwksPath)) {
+                json = Files.readString(jwksPath, StandardCharsets.UTF_8);
+            } else {
+                var resource = new ClassPathResource("dev/jwks.json");
+                json = new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            }
             return ResponseEntity.ok(json);
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "JWKS not available");
