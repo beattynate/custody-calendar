@@ -10,6 +10,10 @@ import com.custodycalendar.api.domain.repository.CustodyCaseRepository;
 import com.custodycalendar.api.domain.repository.PersonRepository;
 import java.time.DateTimeException;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -68,6 +72,33 @@ public class CaseService {
 
     public Optional<CustodyCase> getCase(UUID caseId) {
         return custodyCaseRepository.findById(caseId);
+    }
+
+    public List<CustodyCase> listCasesForSubject(String externalSubject) {
+        Optional<Person> person = personRepository.findByExternalSubject(externalSubject);
+        if (person.isEmpty()) {
+            return List.of();
+        }
+
+        List<CaseMember> memberships = caseMemberRepository.findAllByIdPersonId(person.get().getId());
+        if (memberships.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<UUID> caseIds = new LinkedHashSet<>();
+        for (CaseMember membership : memberships) {
+            if (membership.getId() != null && membership.getId().getCaseId() != null) {
+                caseIds.add(membership.getId().getCaseId());
+            }
+        }
+        if (caseIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<CustodyCase> cases = new ArrayList<>(custodyCaseRepository.findAllByIdIn(caseIds));
+        cases.sort(Comparator.comparing(CustodyCase::getName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(CustodyCase::getId));
+        return cases;
     }
 
     public CustodyCase requireCase(UUID caseId) {

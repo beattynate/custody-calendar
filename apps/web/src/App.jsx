@@ -49,6 +49,28 @@ function shortId(value) {
   return value ? String(value).slice(0, 6) : "";
 }
 
+function defaultBrowserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles";
+  } catch {
+    return "America/Los_Angeles";
+  }
+}
+
+function decodeJwtPayload(token) {
+  if (!token || !token.includes(".")) {
+    return null;
+  }
+  try {
+    const payload = token.split(".")[1];
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
 function labelScoreKey(key) {
   const labels = {
     transitions: "Transitions",
@@ -108,6 +130,16 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [solveRequest, setSolveRequest] = useState(null);
   const [selectedOption, setSelectedOption] = useState(null);
   const [error, setError] = useState("");
+  const [cases, setCases] = useState([]);
+  const [createCaseForm, setCreateCaseForm] = useState({
+    name: "",
+    timezone: defaultBrowserTimezone()
+  });
+  const [inviteMemberForm, setInviteMemberForm] = useState({
+    externalSubject: "",
+    displayName: "",
+    role: "PARENT"
+  });
 
   const memberMap = useMemo(() => {
     const map = new Map();
@@ -116,6 +148,8 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     });
     return map;
   }, [members]);
+
+  const currentTokenClaims = useMemo(() => decodeJwtPayload(settings.token), [settings.token]);
 
   useEffect(() => {
     persistSettings(settings);
@@ -172,6 +206,54 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     }
     const data = await apiRequest(`/api/v1/cases/${settings.caseId}/people`, settings);
     setMembers(data);
+  }
+
+  async function loadCases() {
+    if (!settings.token) {
+      setCases([]);
+      return;
+    }
+    const data = await apiRequest("/api/v1/cases", settings);
+    setCases(data || []);
+  }
+
+  async function createCase() {
+    const payload = {
+      name: createCaseForm.name.trim(),
+      timezone: createCaseForm.timezone.trim()
+    };
+    if (!payload.name || !payload.timezone) {
+      throw new Error("Case name and timezone are required.");
+    }
+    const created = await apiRequest("/api/v1/cases", {
+      ...settings,
+      method: "POST",
+      body: payload
+    });
+    setSettings(prev => ({ ...prev, caseId: created.id }));
+    setCreateCaseForm(prev => ({ ...prev, name: "" }));
+    await loadCases();
+  }
+
+  async function addCaseMember() {
+    if (!settings.caseId) {
+      throw new Error("Select a case before adding a parent.");
+    }
+    const payload = {
+      externalSubject: inviteMemberForm.externalSubject.trim(),
+      displayName: inviteMemberForm.displayName.trim(),
+      role: inviteMemberForm.role
+    };
+    if (!payload.externalSubject || !payload.displayName) {
+      throw new Error("Parent subject and display name are required.");
+    }
+    await apiRequest(`/api/v1/cases/${settings.caseId}/people`, {
+      ...settings,
+      method: "POST",
+      body: payload
+    });
+    setInviteMemberForm(prev => ({ ...prev, externalSubject: "", displayName: "" }));
+    await loadMembers();
   }
 
   async function loadEvents(rangeStart, rangeEnd) {
@@ -257,6 +339,14 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
       withStatus("Loading members", loadMembers);
     }
   }, [activeTab, settings.caseId]);
+
+  useEffect(() => {
+    if (!settings.token) {
+      setCases([]);
+      return;
+    }
+    withStatus("Loading cases", loadCases);
+  }, [settings.baseUrl, settings.token]);
 
   async function submitEvent(form) {
     await apiRequest(`/api/v1/cases/${settings.caseId}/events`, {
@@ -386,6 +476,92 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               onChange={event => setSettings({ ...settings, caseId: event.target.value })}
               placeholder="case UUID"
             />
+          </div>
+          <div className="field">
+            <label>My Cases</label>
+            <div className="stack">
+              <div className="chip-list">
+                <button type="button" onClick={() => withStatus("Loading cases", loadCases)}>
+                  Refresh Cases
+                </button>
+                {cases.length > 0 && <span className="chip">{cases.length} case(s)</span>}
+              </div>
+              {cases.length === 0 ? (
+                <div className="empty">No cases found for this login yet.</div>
+              ) : (
+                <div className="event-list">
+                  {cases.map(custodyCase => (
+                    <div className="event" key={custodyCase.id}>
+                      <div>
+                        <strong>{custodyCase.name}</strong>
+                        <span>{custodyCase.timezone}</span>
+                      </div>
+                      <div className="event-meta">
+                        <span>{custodyCase.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSettings(prev => ({ ...prev, caseId: custodyCase.id }))}
+                        >
+                          Use
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="field">
+            <label>Create Case</label>
+            <div className="stack">
+              <input
+                value={createCaseForm.name}
+                onChange={event => setCreateCaseForm({ ...createCaseForm, name: event.target.value })}
+                placeholder="Case name (e.g. Smith Kids)"
+              />
+              <input
+                value={createCaseForm.timezone}
+                onChange={event => setCreateCaseForm({ ...createCaseForm, timezone: event.target.value })}
+                placeholder="America/Los_Angeles"
+              />
+              <button type="button" onClick={() => withStatus("Creating case", createCase)}>
+                Create Case
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>Add Parent To Selected Case</label>
+            <div className="stack">
+              <div className="chip-list">
+                <span className="chip">
+                  My subject: {currentTokenClaims?.sub || "Sign in to load"}
+                </span>
+              </div>
+              <input
+                value={inviteMemberForm.externalSubject}
+                onChange={event => setInviteMemberForm({ ...inviteMemberForm, externalSubject: event.target.value })}
+                placeholder="Other parent's Clerk subject (sub)"
+              />
+              <input
+                value={inviteMemberForm.displayName}
+                onChange={event => setInviteMemberForm({ ...inviteMemberForm, displayName: event.target.value })}
+                placeholder="Other parent's display name"
+              />
+              <select
+                value={inviteMemberForm.role}
+                onChange={event => setInviteMemberForm({ ...inviteMemberForm, role: event.target.value })}
+              >
+                <option value="PARENT">PARENT</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => withStatus("Adding parent", addCaseMember)}
+                disabled={!settings.caseId}
+              >
+                Add Parent
+              </button>
+            </div>
           </div>
           <div className="status">
             <span>{status}</span>

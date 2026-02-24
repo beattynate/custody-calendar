@@ -6,6 +6,7 @@ import com.custodycalendar.api.security.AuthenticatedUserService;
 import com.custodycalendar.api.web.dto.CaseResponse;
 import com.custodycalendar.api.web.dto.CreateCaseRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -37,6 +38,14 @@ public class CaseController {
         var user = authenticatedUserService.require(authentication);
         CustodyCase created = caseService.createCase(request.name(), request.timezone(), user.subject(), user.displayName());
         return new CaseResponse(created.getId(), created.getName(), created.getTimezone());
+    }
+
+    @GetMapping
+    public List<CaseResponse> listCases(Authentication authentication) {
+        var user = authenticatedUserService.require(authentication);
+        return caseService.listCasesForSubject(user.subject()).stream()
+                .map(custodyCase -> new CaseResponse(custodyCase.getId(), custodyCase.getName(), custodyCase.getTimezone()))
+                .toList();
     }
 
     @GetMapping("/{caseId}")

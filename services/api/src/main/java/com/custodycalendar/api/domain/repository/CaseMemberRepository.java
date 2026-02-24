@@ -9,4 +9,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface CaseMemberRepository extends JpaRepository<CaseMember, CaseMemberId> {
     boolean existsByIdCaseIdAndIdPersonId(UUID caseId, UUID personId);
     List<CaseMember> findAllByIdCaseId(UUID caseId);
+    List<CaseMember> findAllByIdPersonId(UUID personId);
 }
