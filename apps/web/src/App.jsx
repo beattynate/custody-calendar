@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import { apiRequest } from "./api.js";
 
 const TABS = ["Calendar", "Events", "School Days", "Solve"];
@@ -84,6 +85,17 @@ function getMonthGrid(date) {
 }
 
 export default function App() {
+  const clerkConfigured = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+  return clerkConfigured ? <AppWithClerk /> : <AppCore clerkConfigured={false} auth={null} clerkJwtTemplate="" />;
+}
+
+function AppWithClerk() {
+  const auth = useAuth();
+  const clerkJwtTemplate = import.meta.env.VITE_CLERK_JWT_TEMPLATE || "";
+  return <AppCore clerkConfigured auth={auth} clerkJwtTemplate={clerkJwtTemplate} />;
+}
+
+function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [settings, setSettings] = useState(loadStoredSettings);
   const [activeTab, setActiveTab] = useState("Calendar");
   const [status, setStatus] = useState("Idle");
@@ -108,6 +120,39 @@ export default function App() {
   useEffect(() => {
     persistSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (!clerkConfigured || !auth) {
+      return;
+    }
+    let cancelled = false;
+
+    async function syncClerkToken() {
+      if (!auth.isSignedIn) {
+        if (!cancelled) {
+          setSettings(prev => (prev.token ? { ...prev, token: "" } : prev));
+        }
+        return;
+      }
+      const nextToken = await auth.getToken(
+        clerkJwtTemplate ? { template: clerkJwtTemplate } : undefined
+      );
+      if (!cancelled) {
+        setSettings(prev => (prev.token === (nextToken || "") ? prev : { ...prev, token: nextToken || "" }));
+      }
+    }
+
+    syncClerkToken().catch(() => {
+      if (!cancelled) {
+        setError("Failed to retrieve Clerk session token.");
+        setStatus("Error");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, clerkConfigured, clerkJwtTemplate]);
 
   async function withStatus(label, fn) {
     setStatus(label);
@@ -307,11 +352,32 @@ export default function App() {
           </div>
           <div className="field">
             <label>Bearer Token</label>
-            <input
-              value={settings.token}
-              onChange={event => setSettings({ ...settings, token: event.target.value })}
-              placeholder="paste JWT"
-            />
+            {clerkConfigured ? (
+              <div className="stack">
+                <div className="chip-list">
+                  <SignedOut>
+                    <SignInButton mode="modal">
+                      <button type="button">Sign In</button>
+                    </SignInButton>
+                  </SignedOut>
+                  <SignedIn>
+                    <UserButton />
+                    <span className="chip">{settings.token ? "Session token ready" : "Fetching token..."}</span>
+                  </SignedIn>
+                </div>
+                <input
+                  value={settings.token}
+                  onChange={event => setSettings({ ...settings, token: event.target.value })}
+                  placeholder="Clerk token auto-filled after sign in (manual override allowed)"
+                />
+              </div>
+            ) : (
+              <input
+                value={settings.token}
+                onChange={event => setSettings({ ...settings, token: event.target.value })}
+                placeholder="paste JWT"
+              />
+            )}
           </div>
           <div className="field">
             <label>Case ID</label>
