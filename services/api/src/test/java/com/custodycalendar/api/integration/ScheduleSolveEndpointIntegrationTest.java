@@ -44,7 +44,7 @@ class ScheduleSolveEndpointIntegrationTest extends BaseIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbcTemplate.execute("TRUNCATE TABLE ledger_entries, schedule_days, schedule_versions, events, school_calendar_days, schedule_rules, children, case_members, people, cases RESTART IDENTITY CASCADE");
+        jdbcTemplate.execute("TRUNCATE TABLE schedule_proposal_approvals, schedule_proposals, ledger_entries, schedule_days, schedule_versions, events, school_calendar_days, schedule_rules, children, case_members, people, cases RESTART IDENTITY CASCADE");
     }
 
     @Test
@@ -97,10 +97,11 @@ class ScheduleSolveEndpointIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
-    void acceptSolveOptionPersistsScheduleVersionAndMaterializedDays() throws Exception {
+    void proposalApprovalByBothParentsPersistsScheduleVersion() throws Exception {
         Fixture fixture = seedFixture();
         String solveRequest = solveRequestJson(fixture);
 
+        // 1. Solve to get an option ID
         MvcResult solveResult = mockMvc.perform(post("/api/v1/cases/{caseId}/schedule/solve", fixture.caseId)
                         .with(jwt().jwt(jwt -> jwt.subject("auth0|parent-a").claim("name", "Parent A")))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -111,37 +112,47 @@ class ScheduleSolveEndpointIntegrationTest extends BaseIntegrationTest {
         JsonNode solveJson = objectMapper.readTree(solveResult.getResponse().getContentAsString());
         String optionId = solveJson.path("options").get(0).path("optionId").asText();
 
-        String acceptRequest = """
+        // 2. Parent A creates a proposal (auto-approves for proposer)
+        String proposalRequest = """
                 {
                   "optionId": "%s",
-                  "reason": "Accepted from endpoint test",
+                  "reason": "Proposal from endpoint test",
                   "solveRequest": %s
                 }
                 """.formatted(optionId, solveRequest);
 
-        MvcResult acceptResult = mockMvc.perform(post("/api/v1/cases/{caseId}/schedule/solve/accept", fixture.caseId)
+        MvcResult proposalResult = mockMvc.perform(post("/api/v1/cases/{caseId}/schedule/proposals", fixture.caseId)
                         .with(jwt().jwt(jwt -> jwt.subject("auth0|parent-a").claim("name", "Parent A")))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(acceptRequest))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.versionId").isString())
-                .andExpect(jsonPath("$.status").value("ACCEPTED"))
-                .andExpect(jsonPath("$.optionId").value(optionId))
-                .andExpect(jsonPath("$.scoreBreakdown").isMap())
-                .andExpect(jsonPath("$.changedDays").isArray())
-                .andExpect(jsonPath("$.scheduleDayCount").isNumber())
+                        .content(proposalRequest))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.proposalId").isString())
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
                 .andReturn();
 
-        JsonNode acceptJson = objectMapper.readTree(acceptResult.getResponse().getContentAsString());
-        UUID versionId = UUID.fromString(acceptJson.get("versionId").asText());
-        int dayCount = acceptJson.get("scheduleDayCount").asInt();
+        JsonNode proposalJson = objectMapper.readTree(proposalResult.getResponse().getContentAsString());
+        String proposalId = proposalJson.get("proposalId").asText();
+
+        // 3. Parent B approves — triggers auto-accept with materialized schedule
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/cases/{caseId}/schedule/proposals/{proposalId}/approve",
+                        fixture.caseId, proposalId)
+                        .with(jwt().jwt(jwt -> jwt.subject("auth0|parent-b").claim("name", "Parent B")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"comment\":\"Looks good\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.acceptedVersionId").isString())
+                .andReturn();
+
+        JsonNode approveJson = objectMapper.readTree(approveResult.getResponse().getContentAsString());
+        UUID versionId = UUID.fromString(approveJson.get("acceptedVersionId").asText());
 
         assertThat(scheduleVersionRepository.findById(versionId)).isPresent();
         Integer persistedDayCount = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM schedule_days WHERE version_id = ?",
                 Integer.class,
                 versionId);
-        assertThat(persistedDayCount).isEqualTo(dayCount);
+        assertThat(persistedDayCount).isGreaterThan(0);
 
         String preferences = jdbcTemplate.queryForObject(
                 "SELECT preferences::text FROM schedule_versions WHERE id = ?",

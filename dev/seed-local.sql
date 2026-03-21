@@ -45,7 +45,7 @@ VALUES (
     DATE '2026-01-05',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-    '{"anchorParent":"A"}'::jsonb
+    '{"anchorParent":"A","pattern":"AABBAAABBAABBBB"}'::jsonb
 )
 ON CONFLICT (id) DO UPDATE
 SET case_id = EXCLUDED.case_id,

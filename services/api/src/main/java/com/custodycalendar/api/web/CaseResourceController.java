@@ -5,6 +5,7 @@ import com.custodycalendar.api.domain.model.Child;
 import com.custodycalendar.api.domain.model.Event;
 import com.custodycalendar.api.domain.model.ScheduleRule;
 import com.custodycalendar.api.domain.service.CaseResourceService;
+import com.custodycalendar.api.domain.service.ScheduleProposalService;
 import com.custodycalendar.api.domain.service.ScheduleSolveService;
 import com.custodycalendar.api.domain.service.ScheduleVersionService;
 import com.custodycalendar.api.domain.service.SchoolCalendarService;
@@ -15,18 +16,20 @@ import com.custodycalendar.api.domain.solver.SolverConstraints;
 import com.custodycalendar.api.domain.solver.SolverWeights;
 import com.custodycalendar.api.security.AuthenticatedUserService;
 import com.custodycalendar.api.security.AuthenticatedUserService.AuthenticatedUser;
-import com.custodycalendar.api.web.dto.AcceptSolveOptionRequest;
-import com.custodycalendar.api.web.dto.AcceptSolveOptionResponse;
 import com.custodycalendar.api.web.dto.AddCaseMemberRequest;
 import com.custodycalendar.api.web.dto.ChangedDayResponse;
 import com.custodycalendar.api.web.dto.CaseMemberResponse;
 import com.custodycalendar.api.web.dto.ChildResponse;
 import com.custodycalendar.api.web.dto.CreateChildRequest;
 import com.custodycalendar.api.web.dto.CreateEventRequest;
+import com.custodycalendar.api.web.dto.CreateScheduleProposalRequest;
 import com.custodycalendar.api.web.dto.EventResponse;
 import com.custodycalendar.api.web.dto.LedgerImpactResponse;
 import com.custodycalendar.api.web.dto.OwedBalanceResponse;
 import com.custodycalendar.api.web.dto.ScheduleRuleResponse;
+import com.custodycalendar.api.web.dto.ScheduleProposalApprovalResponse;
+import com.custodycalendar.api.web.dto.ScheduleProposalDecisionRequest;
+import com.custodycalendar.api.web.dto.ScheduleProposalResponse;
 import com.custodycalendar.api.web.dto.ScheduleDayResponse;
 import com.custodycalendar.api.web.dto.ScoreComponentResponse;
 import com.custodycalendar.api.web.dto.SchoolCalendarDayRequest;
@@ -66,6 +69,7 @@ public class CaseResourceController {
 
     private final CaseResourceService caseResourceService;
     private final ScheduleSolveService scheduleSolveService;
+    private final ScheduleProposalService scheduleProposalService;
     private final ScheduleVersionService scheduleVersionService;
     private final SchoolCalendarService schoolCalendarService;
     private final AuthenticatedUserService authenticatedUserService;
@@ -75,6 +79,7 @@ public class CaseResourceController {
     public CaseResourceController(
             CaseResourceService caseResourceService,
             ScheduleSolveService scheduleSolveService,
+            ScheduleProposalService scheduleProposalService,
             ScheduleVersionService scheduleVersionService,
             SchoolCalendarService schoolCalendarService,
             AuthenticatedUserService authenticatedUserService,
@@ -82,6 +87,7 @@ public class CaseResourceController {
             ObjectMapper objectMapper) {
         this.caseResourceService = caseResourceService;
         this.scheduleSolveService = scheduleSolveService;
+        this.scheduleProposalService = scheduleProposalService;
         this.scheduleVersionService = scheduleVersionService;
         this.schoolCalendarService = schoolCalendarService;
         this.authenticatedUserService = authenticatedUserService;
@@ -213,29 +219,58 @@ public class CaseResourceController {
                 .toList());
     }
 
-    @PostMapping("/schedule/solve/accept")
+    @GetMapping("/schedule/proposals")
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
-    public AcceptSolveOptionResponse acceptSolveOption(
+    public List<ScheduleProposalResponse> listScheduleProposals(@PathVariable UUID caseId) {
+        return scheduleProposalService.listProposals(caseId).stream()
+                .map(this::toScheduleProposalResponse)
+                .toList();
+    }
+
+    @PostMapping("/schedule/proposals")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public ScheduleProposalResponse createScheduleProposal(
             @PathVariable UUID caseId,
             Authentication authentication,
-            @Valid @RequestBody AcceptSolveOptionRequest request) {
+            @Valid @RequestBody CreateScheduleProposalRequest request) {
         AuthenticatedUser user = authenticatedUserService.require(authentication);
-        var accepted = scheduleVersionService.acceptSolveOption(
+        return toScheduleProposalResponse(scheduleProposalService.createProposal(
                 caseId,
                 user.subject(),
-                request.optionId(),
                 toSolveCommand(request.solveRequest()),
-                request.reason());
-        return new AcceptSolveOptionResponse(
-                accepted.versionId(),
-                accepted.status(),
-                accepted.optionId(),
-                accepted.scoreTotal(),
-                accepted.scoreBreakdown(),
-                accepted.changedDays().stream()
-                        .map(d -> new ChangedDayResponse(d.date(), d.fromParentId(), d.toParentId()))
-                        .toList(),
-                accepted.scheduleDayCount());
+                request.optionId(),
+                request.reason()));
+    }
+
+    @PostMapping("/schedule/proposals/{proposalId}/approve")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public ScheduleProposalResponse approveScheduleProposal(
+            @PathVariable UUID caseId,
+            @PathVariable UUID proposalId,
+            Authentication authentication,
+            @RequestBody(required = false) ScheduleProposalDecisionRequest request) {
+        AuthenticatedUser user = authenticatedUserService.require(authentication);
+        return toScheduleProposalResponse(scheduleProposalService.approveProposal(
+                caseId,
+                proposalId,
+                user.subject(),
+                request == null ? null : request.comment()));
+    }
+
+    @PostMapping("/schedule/proposals/{proposalId}/reject")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public ScheduleProposalResponse rejectScheduleProposal(
+            @PathVariable UUID caseId,
+            @PathVariable UUID proposalId,
+            Authentication authentication,
+            @RequestBody(required = false) ScheduleProposalDecisionRequest request) {
+        AuthenticatedUser user = authenticatedUserService.require(authentication);
+        return toScheduleProposalResponse(scheduleProposalService.rejectProposal(
+                caseId,
+                proposalId,
+                user.subject(),
+                request == null ? null : request.comment()));
     }
 
     @GetMapping("/schedule")
@@ -324,6 +359,27 @@ public class CaseResourceController {
                 event.isLocked(),
                 event.getRecurrenceRule(),
                 event.getNotes());
+    }
+
+    private ScheduleProposalResponse toScheduleProposalResponse(ScheduleProposalService.ProposalView proposal) {
+        return new ScheduleProposalResponse(
+                proposal.proposalId(),
+                proposal.status(),
+                proposal.createdBy(),
+                proposal.createdByName(),
+                proposal.createdAt(),
+                proposal.optionId(),
+                proposal.reason(),
+                proposal.acceptedVersionId(),
+                proposal.optionSnapshot(),
+                proposal.approvals().stream()
+                        .map(a -> new ScheduleProposalApprovalResponse(
+                                a.personId(),
+                                a.displayName(),
+                                a.decision(),
+                                a.decidedAt(),
+                                a.comment()))
+                        .toList());
     }
 
     private ScheduleSolveCommand toSolveCommand(SolveScheduleRequest request) {

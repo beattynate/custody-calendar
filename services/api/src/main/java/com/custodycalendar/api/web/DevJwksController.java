@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
@@ -15,23 +16,18 @@ import java.nio.file.Paths;
 import org.springframework.core.io.ClassPathResource;
 
 @RestController
+@ConditionalOnProperty(name = "app.security.dev-jwks.enabled", havingValue = "true")
 public class DevJwksController {
 
-    private final boolean enabled;
     private final Path jwksPath;
 
     public DevJwksController(
-            @Value("${app.security.dev-jwks.enabled:false}") boolean enabled,
             @Value("${app.security.dev-jwks.path:${user.dir}/dev/jwt/jwks.json}") String jwksPath) {
-        this.enabled = enabled;
         this.jwksPath = Paths.get(jwksPath);
     }
 
     @GetMapping(value = "/dev/jwks", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> jwks() {
-        if (!enabled) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-        }
         try {
             String json;
             if (Files.exists(jwksPath)) {
