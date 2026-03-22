@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: custody-calendar-api
+    runtime: java
+    rootDir: services/api
+    buildCommand: ./mvnw -q -DskipTests package
+    startCommand: java -jar target/*.jar
+    healthCheckPath: /api/v1/ping
+    envVars:
+      - key: DB_URL
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: JWT_JWK_SET_URI
+        sync: false
+      - key: app.cors.allowed-origins
+        sync: false
+      - key: app.security.dev-jwks.enabled
+        value: "false"
+      - key: app.security.allow-subject-override
+        sync: false
+
+  - type: web
+    name: custody-calendar-web
+    runtime: static
+    rootDir: apps/web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist

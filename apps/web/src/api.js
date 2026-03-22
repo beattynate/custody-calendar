@@ -1,9 +1,12 @@
-export async function apiRequest(path, { baseUrl, token, method = "GET", body } = {}) {
+export async function apiRequest(path, { baseUrl, token, subjectOverride, method = "GET", body } = {}) {
   const headers = {
     "Content-Type": "application/json"
   };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  if (subjectOverride) {
+    headers["X-Subject-Override"] = subjectOverride;
   }
 
   const response = await fetch(`${baseUrl}${path}`, {

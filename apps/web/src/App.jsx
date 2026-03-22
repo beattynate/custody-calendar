@@ -7,7 +7,8 @@ const TABS = ["Calendar", "Events", "School Days", "Solve"];
 const defaultSettings = {
   baseUrl: "http://localhost:8080",
   token: "",
-  caseId: ""
+  caseId: "",
+  subjectOverride: ""
 };
 
 function loadStoredSettings() {
@@ -477,6 +478,22 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               placeholder="case UUID"
             />
           </div>
+          {members.length > 0 && (
+            <div className="field">
+              <label>Act As (testing)</label>
+              <select
+                value={settings.subjectOverride}
+                onChange={event => setSettings(prev => ({ ...prev, subjectOverride: event.target.value }))}
+              >
+                <option value="">Myself ({currentTokenClaims?.sub ? shortId(currentTokenClaims.sub) : "—"})</option>
+                {members.map(m => (
+                  <option key={m.personId} value={m.externalSubject}>
+                    {m.displayName} ({shortId(m.externalSubject)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label>My Cases</label>
             <div className="stack">
