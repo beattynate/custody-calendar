@@ -141,6 +141,13 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     displayName: "",
     role: "PARENT"
   });
+  const [scheduleRule, setScheduleRule] = useState(null);
+  const [scheduleRuleForm, setScheduleRuleForm] = useState({
+    anchorDate: "",
+    parentAId: "",
+    parentBId: "",
+    pattern: "AABBAAABBAABBBB"
+  });
 
   const memberMap = useMemo(() => {
     const map = new Map();
@@ -257,6 +264,50 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     await loadMembers();
   }
 
+  async function loadScheduleRule() {
+    if (!settings.caseId) return;
+    try {
+      const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, settings);
+      setScheduleRule(data);
+      setScheduleRuleForm({
+        anchorDate: data.anchorDate || "",
+        parentAId: data.parentAId || "",
+        parentBId: data.parentBId || "",
+        pattern: data.metadata?.pattern || "AABBAAABBAABBBB"
+      });
+    } catch {
+      setScheduleRule(null);
+    }
+  }
+
+  async function saveScheduleRule() {
+    if (!settings.caseId) {
+      throw new Error("Select a case first.");
+    }
+    if (!scheduleRuleForm.parentAId || !scheduleRuleForm.parentBId) {
+      throw new Error("Both parents must be selected.");
+    }
+    if (!scheduleRuleForm.anchorDate) {
+      throw new Error("Anchor date is required.");
+    }
+    const payload = {
+      type: "TWO_TWO_THREE",
+      anchorDate: scheduleRuleForm.anchorDate,
+      parentAId: scheduleRuleForm.parentAId,
+      parentBId: scheduleRuleForm.parentBId,
+      metadata: {
+        anchorParent: "A",
+        pattern: scheduleRuleForm.pattern || "AABBAAABBAABBBB"
+      }
+    };
+    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, {
+      ...settings,
+      method: "PUT",
+      body: payload
+    });
+    setScheduleRule(data);
+  }
+
   async function loadEvents(rangeStart, rangeEnd) {
     if (!settings.caseId) {
       return;
@@ -324,6 +375,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     const from = toDateInput(startOfMonth(calendarMonth));
     const to = toDateInput(endOfMonth(calendarMonth));
     await loadMembers();
+    await loadScheduleRule();
     await loadSchedule(from, to);
     await loadEvents(from, to);
     await loadSchoolDays(from, to);
@@ -337,7 +389,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
 
   useEffect(() => {
     if (activeTab === "Solve" && settings.caseId) {
-      withStatus("Loading members", loadMembers);
+      withStatus("Loading members", async () => { await loadMembers(); await loadScheduleRule(); });
     }
   }, [activeTab, settings.caseId]);
 
@@ -586,6 +638,62 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
           </div>
         </div>
       </header>
+
+      {settings.caseId && members.length >= 2 && (
+        <section className="card" style={{ margin: "1rem" }}>
+          <h3>Schedule Rule {scheduleRule ? "(active)" : "(not set — required before solving)"}</h3>
+          <div className="stack">
+            <div className="field">
+              <label>Anchor Date</label>
+              <input
+                type="date"
+                value={scheduleRuleForm.anchorDate}
+                onChange={e => setScheduleRuleForm(prev => ({ ...prev, anchorDate: e.target.value }))}
+              />
+              <small>The date when the repeating pattern starts for Parent A.</small>
+            </div>
+            <div className="field">
+              <label>Parent A</label>
+              <select
+                value={scheduleRuleForm.parentAId}
+                onChange={e => setScheduleRuleForm(prev => ({ ...prev, parentAId: e.target.value }))}
+              >
+                <option value="">Select parent A</option>
+                {members.map(m => (
+                  <option key={m.personId} value={m.personId}>{m.displayName}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Parent B</label>
+              <select
+                value={scheduleRuleForm.parentBId}
+                onChange={e => setScheduleRuleForm(prev => ({ ...prev, parentBId: e.target.value }))}
+              >
+                <option value="">Select parent B</option>
+                {members.map(m => (
+                  <option key={m.personId} value={m.personId}>{m.displayName}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Custody Pattern</label>
+              <input
+                value={scheduleRuleForm.pattern}
+                onChange={e => setScheduleRuleForm(prev => ({ ...prev, pattern: e.target.value.toUpperCase() }))}
+                placeholder="AABBAAABBAABBBB"
+              />
+              <small>A/B characters. Default 2-2-3: AABBAAABBAABBBB (14-day cycle).</small>
+            </div>
+            <button
+              type="button"
+              onClick={() => withStatus("Saving schedule rule", saveScheduleRule)}
+            >
+              {scheduleRule ? "Update Schedule Rule" : "Set Schedule Rule"}
+            </button>
+          </div>
+        </section>
+      )}
 
       <nav className="tabs">
         {TABS.map(tab => (
