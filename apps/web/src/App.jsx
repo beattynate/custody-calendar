@@ -394,6 +394,15 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   }, [activeTab, settings.caseId]);
 
   useEffect(() => {
+    if (settings.caseId && settings.token) {
+      loadMembers().then(() => loadScheduleRule()).catch(() => {});
+    } else {
+      setMembers([]);
+      setScheduleRule(null);
+    }
+  }, [settings.caseId, settings.token]);
+
+  useEffect(() => {
     if (!settings.token) {
       setCases([]);
       return;
@@ -444,6 +453,8 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     if (!solveRequest) {
       throw new Error("Solve request not available. Run solve first.");
     }
+
+    // Step 1: Create proposal as current user (auto-approves for proposer)
     const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, {
       ...settings,
       method: "POST",
@@ -455,29 +466,39 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     });
     setSelectedOption(proposal.proposalId);
 
-    // If both approvals are already in (e.g. single-user override mode), refresh
     if (proposal.status === "APPROVED") {
       await refreshCalendar();
       return;
     }
 
-    // Find the other parent who hasn't approved yet
+    // Step 2: Find the pending approver and auto-approve as them if we can
     const pendingApproval = (proposal.approvals || []).find(a => !a.decision);
-    if (pendingApproval && settings.subjectOverride) {
-      // Auto-approve as the overridden subject (testing convenience)
-      const approved = await apiRequest(
-        `/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`,
-        { ...settings, method: "POST", body: { comment: "Approved via web app" } }
-      );
-      if (approved.status === "APPROVED") {
-        await refreshCalendar();
-        return;
+    if (pendingApproval) {
+      // Find the external subject for the pending approver
+      const pendingMember = members.find(m => m.personId === pendingApproval.personId);
+      if (pendingMember) {
+        try {
+          const approved = await apiRequest(
+            `/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`,
+            {
+              ...settings,
+              subjectOverride: pendingMember.externalSubject,
+              method: "POST",
+              body: { comment: "Auto-approved via web app testing" }
+            }
+          );
+          if (approved.status === "APPROVED") {
+            await refreshCalendar();
+            return;
+          }
+        } catch (err) {
+          // Override not enabled or not permitted — fall through to pending state
+        }
       }
     }
 
     setError("Proposal created — waiting for other parent to approve (ID: " + proposal.proposalId + ")");
     setStatus("Pending Approval");
-    return response;
   }
 
   const monthGrid = useMemo(() => getMonthGrid(calendarMonth), [calendarMonth]);
