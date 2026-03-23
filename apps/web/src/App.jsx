@@ -440,21 +440,43 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     setSelectedOption(null);
   }
 
-  async function acceptOption(optionId) {
+  async function proposeOption(optionId) {
     if (!solveRequest) {
       throw new Error("Solve request not available. Run solve first.");
     }
-    const response = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/solve/accept`, {
+    const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, {
       ...settings,
       method: "POST",
       body: {
         optionId,
-        reason: "Accepted via web MVP",
+        reason: "Proposed via web app",
         solveRequest
       }
     });
-    setSelectedOption(response.optionId);
-    await refreshCalendar();
+    setSelectedOption(proposal.proposalId);
+
+    // If both approvals are already in (e.g. single-user override mode), refresh
+    if (proposal.status === "APPROVED") {
+      await refreshCalendar();
+      return;
+    }
+
+    // Find the other parent who hasn't approved yet
+    const pendingApproval = (proposal.approvals || []).find(a => !a.decision);
+    if (pendingApproval && settings.subjectOverride) {
+      // Auto-approve as the overridden subject (testing convenience)
+      const approved = await apiRequest(
+        `/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`,
+        { ...settings, method: "POST", body: { comment: "Approved via web app" } }
+      );
+      if (approved.status === "APPROVED") {
+        await refreshCalendar();
+        return;
+      }
+    }
+
+    setError("Proposal created — waiting for other parent to approve (ID: " + proposal.proposalId + ")");
+    setStatus("Pending Approval");
     return response;
   }
 
@@ -873,9 +895,9 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
                 <div className="option-actions">
                   <button
                     className={selectedOption === option.optionId ? "primary" : ""}
-                    onClick={() => withStatus("Accepting option", () => acceptOption(option.optionId))}
+                    onClick={() => withStatus("Proposing option", () => proposeOption(option.optionId))}
                   >
-                    {selectedOption === option.optionId ? "Accepted" : "Accept Option"}
+                    {selectedOption === option.optionId ? "Proposed" : "Propose & Accept"}
                   </button>
                 </div>
               </div>
