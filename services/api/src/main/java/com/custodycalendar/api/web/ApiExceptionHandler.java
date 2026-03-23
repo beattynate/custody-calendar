@@ -124,4 +124,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                         request.getRequestURI(),
                         Map.of()));
     }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleUnexpected(Exception ex, HttpServletRequest request) {
+        logger.error("Unhandled exception on " + request.getMethod() + " " + request.getRequestURI(), ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiErrorResponse(
+                        Instant.now(),
+                        HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                        HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(),
+                        ex.getMessage(),
+                        request.getRequestURI(),
+                        Map.of()));
+    }
 }
