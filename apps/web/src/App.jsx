@@ -2,14 +2,25 @@ import React, { useEffect, useMemo, useState } from "react";
 import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import { apiRequest } from "./api.js";
 
-const TABS = ["Calendar", "Events", "School Days", "Solve"];
+// ── Constants ──
+const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve"];
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const defaultSettings = {
-  baseUrl: "http://localhost:8080",
+  baseUrl: "",
   token: "",
   caseId: "",
   subjectOverride: ""
 };
+
+// ── Utilities ──
+function resolveBaseUrl(settings) {
+  if (settings.baseUrl) return settings.baseUrl;
+  if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
+    return window.location.origin;
+  }
+  return "http://localhost:8080";
+}
 
 function loadStoredSettings() {
   try {
@@ -20,8 +31,8 @@ function loadStoredSettings() {
   }
 }
 
-function persistSettings(settings) {
-  localStorage.setItem("cc-settings", JSON.stringify(settings));
+function persistSettings(s) {
+  localStorage.setItem("cc-settings", JSON.stringify(s));
 }
 
 function toDateInput(date) {
@@ -37,76 +48,67 @@ function endOfMonth(date) {
 }
 
 function addDays(date, count) {
-  const result = new Date(date);
-  result.setDate(result.getDate() + count);
-  return result;
+  const r = new Date(date);
+  r.setDate(r.getDate() + count);
+  return r;
 }
 
-function formatMonthTitle(date) {
+function fmtMonth(date) {
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-function shortId(value) {
-  return value ? String(value).slice(0, 6) : "";
+function shortId(v) {
+  return v ? String(v).slice(0, 6) : "";
 }
 
-function defaultBrowserTimezone() {
+function defaultTz() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles"; }
+  catch { return "America/Los_Angeles"; }
+}
+
+function decodeJwt(token) {
+  if (!token || !token.includes(".")) return null;
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles";
-  } catch {
-    return "America/Los_Angeles";
-  }
+    const p = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(p.padEnd(Math.ceil(p.length / 4) * 4, "=")));
+  } catch { return null; }
 }
 
-function decodeJwtPayload(token) {
-  if (!token || !token.includes(".")) {
-    return null;
-  }
-  try {
-    const payload = token.split(".")[1];
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    return JSON.parse(atob(padded));
-  } catch {
-    return null;
-  }
+function scoreLabel(key) {
+  const m = { transitions: "Transitions", schoolNightTransitions: "School-night transitions", parityDrift: "Parity drift", lockedProximity: "Near locked days", owedImbalance: "Owed imbalance", runDaysOverThree: "Long runs (>3)" };
+  return m[key] || key;
 }
 
-function labelScoreKey(key) {
-  const labels = {
-    transitions: "Transitions",
-    schoolNightTransitions: "School-night transitions",
-    parityDrift: "Weekend parity drift",
-    lockedProximity: "Changes near locked days",
-    owedImbalance: "Total owed days",
-    runDaysOverThree: "Run days over 3"
-  };
-  return labels[key] || key;
-}
-
-function formatDayBucket(bucket) {
-  if (bucket === "SCHOOL") return "school";
-  if (bucket === "NON_SCHOOL") return "non-school";
-  return (bucket || "").toLowerCase();
+function fmtBucket(b) {
+  if (b === "SCHOOL") return "school";
+  if (b === "NON_SCHOOL") return "non-school";
+  return (b || "").toLowerCase();
 }
 
 function getMonthGrid(date) {
   const start = startOfMonth(date);
   const end = endOfMonth(date);
-  const startOffset = (start.getDay() + 6) % 7;
+  const offset = (start.getDay() + 6) % 7;
   const days = [];
-  for (let i = 0; i < startOffset; i += 1) {
-    days.push({ date: addDays(start, i - startOffset), current: false });
-  }
-  for (let d = 0; d < end.getDate(); d += 1) {
-    days.push({ date: addDays(start, d), current: true });
-  }
-  while (days.length % 7 !== 0) {
-    days.push({ date: addDays(end, days.length - (startOffset + end.getDate()) + 1), current: false });
-  }
+  for (let i = 0; i < offset; i++) days.push({ date: addDays(start, i - offset), current: false });
+  for (let d = 0; d < end.getDate(); d++) days.push({ date: addDays(start, d), current: true });
+  while (days.length % 7 !== 0) days.push({ date: addDays(end, days.length - (offset + end.getDate()) + 1), current: false });
   return days;
 }
 
+function relativeTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return d.toLocaleDateString();
+}
+
+// ── Entry points ──
 export default function App() {
   const clerkConfigured = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
   return clerkConfigured ? <AppWithClerk /> : <AppCore clerkConfigured={false} auth={null} clerkJwtTemplate="" />;
@@ -114,12 +116,14 @@ export default function App() {
 
 function AppWithClerk() {
   const auth = useAuth();
-  const clerkJwtTemplate = import.meta.env.VITE_CLERK_JWT_TEMPLATE || "";
-  return <AppCore clerkConfigured auth={auth} clerkJwtTemplate={clerkJwtTemplate} />;
+  const t = import.meta.env.VITE_CLERK_JWT_TEMPLATE || "";
+  return <AppCore clerkConfigured auth={auth} clerkJwtTemplate={t} />;
 }
 
+// ── Main App ──
 function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [settings, setSettings] = useState(loadStoredSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Calendar");
   const [status, setStatus] = useState("Idle");
   const [members, setMembers] = useState([]);
@@ -132,134 +136,105 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [selectedOption, setSelectedOption] = useState(null);
   const [error, setError] = useState("");
   const [cases, setCases] = useState([]);
-  const [createCaseForm, setCreateCaseForm] = useState({
-    name: "",
-    timezone: defaultBrowserTimezone()
-  });
-  const [inviteMemberForm, setInviteMemberForm] = useState({
-    externalSubject: "",
-    displayName: "",
-    role: "PARENT"
-  });
+  const [createCaseForm, setCreateCaseForm] = useState({ name: "", timezone: defaultTz() });
+  const [inviteMemberForm, setInviteMemberForm] = useState({ externalSubject: "", displayName: "", role: "PARENT" });
   const [scheduleRule, setScheduleRule] = useState(null);
-  const [scheduleRuleForm, setScheduleRuleForm] = useState({
-    anchorDate: "",
-    parentAId: "",
-    parentBId: "",
-    pattern: "AABBAAABBAABBBB"
-  });
+  const [scheduleRuleForm, setScheduleRuleForm] = useState({ anchorDate: "", parentAId: "", parentBId: "", pattern: "AABBAAABBAABBBB" });
+  const [proposals, setProposals] = useState([]);
+  const [previewProposalId, setPreviewProposalId] = useState(null);
+
+  // Resolved API settings
+  function api() {
+    return { ...settings, baseUrl: resolveBaseUrl(settings) };
+  }
 
   const memberMap = useMemo(() => {
-    const map = new Map();
-    members.forEach(member => {
-      map.set(member.personId, member.displayName);
-    });
-    return map;
+    const m = new Map();
+    members.forEach(p => m.set(p.personId, p.displayName));
+    return m;
   }, [members]);
 
-  const currentTokenClaims = useMemo(() => decodeJwtPayload(settings.token), [settings.token]);
+  const claims = useMemo(() => decodeJwt(settings.token), [settings.token]);
+  const todayStr = toDateInput(new Date());
 
+  useEffect(() => { persistSettings(settings); }, [settings]);
+
+  // Clerk token sync
   useEffect(() => {
-    persistSettings(settings);
-  }, [settings]);
-
-  useEffect(() => {
-    if (!clerkConfigured || !auth) {
-      return;
-    }
-    let cancelled = false;
-
-    async function syncClerkToken() {
-      if (!auth.isSignedIn) {
-        if (!cancelled) {
-          setSettings(prev => (prev.token ? { ...prev, token: "" } : prev));
-        }
-        return;
-      }
-      const nextToken = await auth.getToken(
-        clerkJwtTemplate ? { template: clerkJwtTemplate } : undefined
-      );
-      if (!cancelled) {
-        setSettings(prev => (prev.token === (nextToken || "") ? prev : { ...prev, token: nextToken || "" }));
-      }
-    }
-
-    syncClerkToken().catch(() => {
-      if (!cancelled) {
-        setError("Failed to retrieve Clerk session token.");
-        setStatus("Error");
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    if (!clerkConfigured || !auth) return;
+    let c = false;
+    (async () => {
+      if (!auth.isSignedIn) { if (!c) setSettings(p => p.token ? { ...p, token: "" } : p); return; }
+      const t = await auth.getToken(clerkJwtTemplate ? { template: clerkJwtTemplate } : undefined);
+      if (!c) setSettings(p => p.token === (t || "") ? p : { ...p, token: t || "" });
+    })().catch(() => { if (!c) { setError("Failed to get Clerk token."); setStatus("Error"); } });
+    return () => { c = true; };
   }, [auth, clerkConfigured, clerkJwtTemplate]);
 
+  // Load cases on token change
+  useEffect(() => {
+    if (!settings.token) { setCases([]); return; }
+    withStatus("Loading", loadCases);
+  }, [settings.baseUrl, settings.token]);
+
+  // Auto-select single case
+  useEffect(() => {
+    if (cases.length === 1 && !settings.caseId) {
+      setSettings(p => ({ ...p, caseId: cases[0].id }));
+    }
+  }, [cases]);
+
+  // Load members + rule when case changes
+  useEffect(() => {
+    if (settings.caseId && settings.token) {
+      loadMembers().then(() => loadScheduleRule()).catch(() => {});
+    } else {
+      setMembers([]);
+      setScheduleRule(null);
+    }
+  }, [settings.caseId, settings.token]);
+
+  // Tab data loading
+  useEffect(() => {
+    if (!settings.caseId) return;
+    if (activeTab === "Calendar") withStatus("Loading calendar", refreshCalendar);
+    if (activeTab === "Solve") withStatus("Loading", async () => { await loadMembers(); await loadScheduleRule(); });
+    if (activeTab === "Proposals") withStatus("Loading proposals", loadProposals);
+  }, [activeTab, calendarMonth, settings.caseId]);
+
+  // ── Status wrapper ──
   async function withStatus(label, fn) {
     setStatus(label);
     setError("");
-    try {
-      await fn();
-      setStatus("Ready");
-    } catch (err) {
-      setError(err.message || String(err));
-      setStatus("Error");
-    }
+    try { await fn(); setStatus("Ready"); }
+    catch (err) { setError(err.message || String(err)); setStatus("Error"); }
   }
 
+  // ── API functions ──
   async function loadMembers() {
-    if (!settings.caseId) {
-      return;
-    }
-    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/people`, settings);
-    setMembers(data);
+    if (!settings.caseId) return;
+    setMembers(await apiRequest(`/api/v1/cases/${settings.caseId}/people`, api()));
   }
 
   async function loadCases() {
-    if (!settings.token) {
-      setCases([]);
-      return;
-    }
-    const data = await apiRequest("/api/v1/cases", settings);
-    setCases(data || []);
+    if (!settings.token) { setCases([]); return; }
+    setCases((await apiRequest("/api/v1/cases", api())) || []);
   }
 
   async function createCase() {
-    const payload = {
-      name: createCaseForm.name.trim(),
-      timezone: createCaseForm.timezone.trim()
-    };
-    if (!payload.name || !payload.timezone) {
-      throw new Error("Case name and timezone are required.");
-    }
-    const created = await apiRequest("/api/v1/cases", {
-      ...settings,
-      method: "POST",
-      body: payload
-    });
+    const p = { name: createCaseForm.name.trim(), timezone: createCaseForm.timezone.trim() };
+    if (!p.name || !p.timezone) throw new Error("Case name and timezone are required.");
+    const created = await apiRequest("/api/v1/cases", { ...api(), method: "POST", body: p });
     setSettings(prev => ({ ...prev, caseId: created.id }));
     setCreateCaseForm(prev => ({ ...prev, name: "" }));
     await loadCases();
   }
 
   async function addCaseMember() {
-    if (!settings.caseId) {
-      throw new Error("Select a case before adding a parent.");
-    }
-    const payload = {
-      externalSubject: inviteMemberForm.externalSubject.trim(),
-      displayName: inviteMemberForm.displayName.trim(),
-      role: inviteMemberForm.role
-    };
-    if (!payload.externalSubject || !payload.displayName) {
-      throw new Error("Parent subject and display name are required.");
-    }
-    await apiRequest(`/api/v1/cases/${settings.caseId}/people`, {
-      ...settings,
-      method: "POST",
-      body: payload
-    });
+    if (!settings.caseId) throw new Error("Select a case first.");
+    const p = { externalSubject: inviteMemberForm.externalSubject.trim(), displayName: inviteMemberForm.displayName.trim(), role: inviteMemberForm.role };
+    if (!p.externalSubject || !p.displayName) throw new Error("Subject and display name are required.");
+    await apiRequest(`/api/v1/cases/${settings.caseId}/people`, { ...api(), method: "POST", body: p });
     setInviteMemberForm(prev => ({ ...prev, externalSubject: "", displayName: "" }));
     await loadMembers();
   }
@@ -267,108 +242,45 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   async function loadScheduleRule() {
     if (!settings.caseId) return;
     try {
-      const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, settings);
-      setScheduleRule(data);
-      setScheduleRuleForm({
-        anchorDate: data.anchorDate || "",
-        parentAId: data.parentAId || "",
-        parentBId: data.parentBId || "",
-        pattern: data.metadata?.pattern || "AABBAAABBAABBBB"
-      });
-    } catch {
-      setScheduleRule(null);
-    }
+      const d = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, api());
+      setScheduleRule(d);
+      setScheduleRuleForm({ anchorDate: d.anchorDate || "", parentAId: d.parentAId || "", parentBId: d.parentBId || "", pattern: d.metadata?.pattern || "AABBAAABBAABBBB" });
+    } catch { setScheduleRule(null); }
   }
 
   async function saveScheduleRule() {
-    if (!settings.caseId) {
-      throw new Error("Select a case first.");
-    }
-    if (!scheduleRuleForm.parentAId || !scheduleRuleForm.parentBId) {
-      throw new Error("Both parents must be selected.");
-    }
-    if (!scheduleRuleForm.anchorDate) {
-      throw new Error("Anchor date is required.");
-    }
-    const payload = {
-      type: "TWO_TWO_THREE",
-      anchorDate: scheduleRuleForm.anchorDate,
-      parentAId: scheduleRuleForm.parentAId,
-      parentBId: scheduleRuleForm.parentBId,
-      metadata: {
-        anchorParent: "A",
-        pattern: scheduleRuleForm.pattern || "AABBAAABBAABBBB"
-      }
-    };
-    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, {
-      ...settings,
-      method: "PUT",
-      body: payload
+    if (!settings.caseId) throw new Error("Select a case first.");
+    if (!scheduleRuleForm.parentAId || !scheduleRuleForm.parentBId) throw new Error("Both parents must be selected.");
+    if (!scheduleRuleForm.anchorDate) throw new Error("Anchor date is required.");
+    const d = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule`, {
+      ...api(), method: "PUT",
+      body: { type: "TWO_TWO_THREE", anchorDate: scheduleRuleForm.anchorDate, parentAId: scheduleRuleForm.parentAId, parentBId: scheduleRuleForm.parentBId, metadata: { anchorParent: "A", pattern: scheduleRuleForm.pattern || "AABBAAABBAABBBB" } }
     });
-    setScheduleRule(data);
+    setScheduleRule(d);
   }
 
-  async function loadEvents(rangeStart, rangeEnd) {
-    if (!settings.caseId) {
-      return;
-    }
-    const data = await apiRequest(
-      `/api/v1/cases/${settings.caseId}/events?from=${rangeStart}&to=${rangeEnd}`,
-      settings
-    );
-    setEvents(data);
+  async function loadEvents(from, to) {
+    if (!settings.caseId) return;
+    setEvents(await apiRequest(`/api/v1/cases/${settings.caseId}/events?from=${from}&to=${to}`, api()));
   }
 
-  async function loadSchedule(rangeStart, rangeEnd) {
-    if (!settings.caseId) {
-      return;
-    }
-    const data = await apiRequest(
-      `/api/v1/cases/${settings.caseId}/schedule?from=${rangeStart}&to=${rangeEnd}`,
-      settings
-    );
-    setScheduleDays(data);
+  async function loadSchedule(from, to) {
+    if (!settings.caseId) return;
+    try { setScheduleDays(await apiRequest(`/api/v1/cases/${settings.caseId}/schedule?from=${from}&to=${to}`, api())); }
+    catch { setScheduleDays([]); }
   }
 
-  async function loadSchoolDays(rangeStart, rangeEnd) {
-    if (!settings.caseId) {
-      return;
-    }
-    const data = await apiRequest(
-      `/api/v1/cases/${settings.caseId}/school-calendar-days?from=${rangeStart}&to=${rangeEnd}`,
-      settings
-    );
-    setSchoolDays(data);
+  async function loadSchoolDays(from, to) {
+    if (!settings.caseId) return;
+    setSchoolDays(await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days?from=${from}&to=${to}`, api()));
   }
 
   async function upsertSchoolDay(day) {
-    const payload = [
-      {
-        date: day.date,
-        dayType: day.dayType
-      }
-    ];
-    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days`, {
-      ...settings,
-      method: "POST",
-      body: payload
-    });
-    setSchoolDays(data);
+    setSchoolDays(await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days`, { ...api(), method: "POST", body: [{ date: day.date, dayType: day.dayType }] }));
   }
 
   async function bulkGenerateSchoolDays(form) {
-    const payload = {
-      startDate: form.startDate,
-      endDate: form.endDate,
-      dayType: form.dayType,
-      daysOfWeek: form.daysOfWeek
-    };
-    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days/bulk`, {
-      ...settings,
-      method: "POST",
-      body: payload
-    });
-    setSchoolDays(data);
+    setSchoolDays(await apiRequest(`/api/v1/cases/${settings.caseId}/school-calendar-days/bulk`, { ...api(), method: "POST", body: form }));
   }
 
   async function refreshCalendar() {
@@ -381,382 +293,256 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     await loadSchoolDays(from, to);
   }
 
-  useEffect(() => {
-    if (activeTab === "Calendar" && settings.caseId) {
-      withStatus("Loading calendar", refreshCalendar);
-    }
-  }, [activeTab, calendarMonth, settings.caseId]);
-
-  useEffect(() => {
-    if (activeTab === "Solve" && settings.caseId) {
-      withStatus("Loading members", async () => { await loadMembers(); await loadScheduleRule(); });
-    }
-  }, [activeTab, settings.caseId]);
-
-  useEffect(() => {
-    if (settings.caseId && settings.token) {
-      loadMembers().then(() => loadScheduleRule()).catch(() => {});
-    } else {
-      setMembers([]);
-      setScheduleRule(null);
-    }
-  }, [settings.caseId, settings.token]);
-
-  useEffect(() => {
-    if (!settings.token) {
-      setCases([]);
-      return;
-    }
-    withStatus("Loading cases", loadCases);
-  }, [settings.baseUrl, settings.token]);
-
   async function submitEvent(form) {
-    await apiRequest(`/api/v1/cases/${settings.caseId}/events`, {
-      ...settings,
-      method: "POST",
-      body: form
-    });
+    await apiRequest(`/api/v1/cases/${settings.caseId}/events`, { ...api(), method: "POST", body: form });
     await loadEvents(form.startDate, form.endDate);
   }
 
   async function solveSchedule(form) {
     await loadMembers();
-    const payload = {
-      baseVersionId: null,
-      horizonStart: form.horizonStart,
-      horizonEnd: form.horizonEnd
-    };
+    const payload = { baseVersionId: null, horizonStart: form.horizonStart, horizonEnd: form.horizonEnd };
     if (!form.baselineOnly) {
-      payload.newEvent = {
-        title: form.title,
-        startDate: form.startDate,
-        endDate: form.endDate,
-        eventType: form.eventType,
-        appliesTo: form.appliesTo,
-        parentId: form.parentId,
-        locked: form.locked,
-        recurrenceRule: "",
-        notes: form.notes
-      };
+      payload.newEvent = { title: form.title, startDate: form.startDate, endDate: form.endDate, eventType: form.eventType, appliesTo: form.appliesTo, parentId: form.parentId, locked: form.locked, recurrenceRule: "", notes: form.notes };
     }
-    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/solve`, {
-      ...settings,
-      method: "POST",
-      body: payload
-    });
+    const data = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/solve`, { ...api(), method: "POST", body: payload });
     setSolveOptions(data.options || []);
     setSolveRequest(payload);
     setSelectedOption(null);
   }
 
   async function proposeOption(optionId) {
-    if (!solveRequest) {
-      throw new Error("Solve request not available. Run solve first.");
-    }
-
-    // Step 1: Create proposal as current user (auto-approves for proposer)
-    const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, {
-      ...settings,
-      method: "POST",
-      body: {
-        optionId,
-        reason: "Proposed via web app",
-        solveRequest
-      }
-    });
+    if (!solveRequest) throw new Error("Run solve first.");
+    const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, { ...api(), method: "POST", body: { optionId, reason: "Proposed via web app", solveRequest } });
     setSelectedOption(proposal.proposalId);
-
-    if (proposal.status === "APPROVED") {
-      await refreshCalendar();
-      return;
-    }
-
-    // Step 2: Find the pending approver and auto-approve as them if we can
-    const pendingApproval = (proposal.approvals || []).find(a => !a.decision);
-    if (pendingApproval) {
-      // Find the external subject for the pending approver
-      const pendingMember = members.find(m => m.personId === pendingApproval.personId);
-      if (pendingMember) {
+    if (proposal.status === "APPROVED") { await refreshCalendar(); return; }
+    const pending = (proposal.approvals || []).find(a => !a.decision);
+    if (pending) {
+      const m = members.find(x => x.personId === pending.personId);
+      if (m) {
         try {
-          const approved = await apiRequest(
-            `/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`,
-            {
-              ...settings,
-              subjectOverride: pendingMember.externalSubject,
-              method: "POST",
-              body: { comment: "Auto-approved via web app testing" }
-            }
-          );
-          if (approved.status === "APPROVED") {
-            await refreshCalendar();
-            return;
-          }
-        } catch (err) {
-          // Override not enabled or not permitted — fall through to pending state
-        }
+          const approved = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`, { ...api(), subjectOverride: m.externalSubject, method: "POST", body: { comment: "Auto-approved" } });
+          if (approved.status === "APPROVED") { await refreshCalendar(); return; }
+        } catch { /* override not enabled */ }
       }
     }
-
-    setError("Proposal created — waiting for other parent to approve (ID: " + proposal.proposalId + ")");
+    setError("Proposal created. Waiting for other parent to approve.");
     setStatus("Pending Approval");
   }
 
-  const monthGrid = useMemo(() => getMonthGrid(calendarMonth), [calendarMonth]);
-  const scheduleMap = useMemo(() => {
-    const map = new Map();
-    scheduleDays.forEach(day => {
-      map.set(day.date, day);
-    });
-    return map;
-  }, [scheduleDays]);
-
-  function personLabel(personId) {
-    if (!personId) {
-      return "Unknown";
-    }
-    return memberMap.get(personId) || `Parent ${shortId(personId)}`;
+  async function loadProposals() {
+    if (!settings.caseId) return;
+    setProposals((await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, api())) || []);
   }
 
+  async function approveProposal(proposalId) {
+    await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals/${proposalId}/approve`, { ...api(), method: "POST", body: { comment: "" } });
+    await loadProposals();
+    await refreshCalendar();
+  }
+
+  async function rejectProposal(proposalId) {
+    await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals/${proposalId}/reject`, { ...api(), method: "POST", body: { comment: "" } });
+    await loadProposals();
+  }
+
+  // ── Derived data ──
+  const monthGrid = useMemo(() => getMonthGrid(calendarMonth), [calendarMonth]);
+  const scheduleMap = useMemo(() => {
+    const m = new Map();
+    scheduleDays.forEach(d => m.set(d.date, d));
+    return m;
+  }, [scheduleDays]);
+
+  const pendingCount = useMemo(() => proposals.filter(p => p.status === "PENDING_APPROVAL").length, [proposals]);
+
+  const previewProposal = useMemo(() => proposals.find(p => p.proposalId === previewProposalId), [previewProposalId, proposals]);
+  const proposalChangeMap = useMemo(() => {
+    const m = new Map();
+    if (!previewProposal?.optionSnapshot?.changedDays) return m;
+    previewProposal.optionSnapshot.changedDays.forEach(ch => m.set(ch.date, ch));
+    return m;
+  }, [previewProposal]);
+
+  function parentClass(parentId) {
+    if (!scheduleRule) return "";
+    if (parentId === scheduleRule.parentAId) return "parent-a";
+    if (parentId === scheduleRule.parentBId) return "parent-b";
+    return "";
+  }
+
+  function personLabel(id) {
+    if (!id) return "Unassigned";
+    return memberMap.get(id) || `Parent ${shortId(id)}`;
+  }
+
+  const activeCaseName = useMemo(() => {
+    const c = cases.find(c => c.id === settings.caseId);
+    return c ? c.name : "";
+  }, [cases, settings.caseId]);
+
+  // ── Shared calendar renderer ──
+  function renderCalendarGrid(grid, sMap, changeOverlay, month) {
+    return (
+      <>
+        {DAY_NAMES.map(d => <div key={d} className="day-label">{d}</div>)}
+        {grid.map(({ date, current }, idx) => {
+          const iso = toDateInput(date);
+          const assignment = sMap.get(iso);
+          const change = changeOverlay ? changeOverlay.get(iso) : null;
+          const effectiveParent = change ? change.toParentId : assignment?.assignedParentId;
+          const label = effectiveParent ? personLabel(effectiveParent) : "\u2014";
+          const isToday = iso === todayStr;
+          const cls = [
+            "day",
+            current ? "" : "dim",
+            isToday ? "today" : "",
+            parentClass(effectiveParent),
+            change ? "proposed-change" : ""
+          ].filter(Boolean).join(" ");
+          return (
+            <div key={`${iso}-${idx}`} className={cls}>
+              <div className="day-top">
+                <span className="day-num">{date.getDate()}</span>
+                {assignment?.lockedSourceEventId && <span className="lock-icon">LOCK</span>}
+              </div>
+              <div className="day-owner">{label}</div>
+              {change && <div className="day-meta">was {personLabel(change.fromParentId)}</div>}
+              {!change && assignment && <div className="day-meta">{assignment.derivedFrom === "BASELINE" ? "" : assignment.derivedFrom}</div>}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  // ── Render ──
   return (
     <div className="app">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Custody Calendar</p>
-          <h1>Balance changes without breaking the baseline.</h1>
-          <p className="subhead">
-            Deterministic solver options with transparent scoring. Use the controls below to connect your case and plan.
-          </p>
+      {/* ── Header ── */}
+      <header className="app-header">
+        <span className="brand">Custody Calendar</span>
+        <div className="case-select">
+          <select
+            value={settings.caseId}
+            onChange={e => setSettings(p => ({ ...p, caseId: e.target.value }))}
+          >
+            <option value="">Select case...</option>
+            {cases.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
-        <div className="card settings">
-          <div className="field">
-            <label>API Base URL</label>
-            <input
-              value={settings.baseUrl}
-              onChange={event => setSettings({ ...settings, baseUrl: event.target.value })}
-              placeholder="http://localhost:8080"
-            />
-          </div>
-          <div className="field">
-            <label>Bearer Token</label>
-            {clerkConfigured ? (
-              <div className="stack">
-                <div className="chip-list">
-                  <SignedOut>
-                    <SignInButton mode="modal">
-                      <button type="button">Sign In</button>
-                    </SignInButton>
-                  </SignedOut>
-                  <SignedIn>
-                    <UserButton />
-                    <span className="chip">{settings.token ? "Session token ready" : "Fetching token..."}</span>
-                  </SignedIn>
-                </div>
-                <input
-                  value={settings.token}
-                  onChange={event => setSettings({ ...settings, token: event.target.value })}
-                  placeholder="Clerk token auto-filled after sign in (manual override allowed)"
-                />
-              </div>
-            ) : (
-              <input
-                value={settings.token}
-                onChange={event => setSettings({ ...settings, token: event.target.value })}
-                placeholder="paste JWT"
-              />
-            )}
-          </div>
-          <div className="field">
-            <label>Case ID</label>
-            <input
-              value={settings.caseId}
-              onChange={event => setSettings({ ...settings, caseId: event.target.value })}
-              placeholder="case UUID"
-            />
-          </div>
-          {members.length > 0 && (
-            <div className="field">
-              <label>Act As (testing)</label>
-              <select
-                value={settings.subjectOverride}
-                onChange={event => setSettings(prev => ({ ...prev, subjectOverride: event.target.value }))}
-              >
-                <option value="">Myself ({currentTokenClaims?.sub ? shortId(currentTokenClaims.sub) : "—"})</option>
-                {members.map(m => (
-                  <option key={m.personId} value={m.externalSubject}>
-                    {m.displayName} ({shortId(m.externalSubject)})
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="header-right">
+          <span className="header-status">
+            {error ? <span className="error">{error}</span> : status !== "Ready" && status !== "Idle" ? status : activeCaseName}
+          </span>
+          {clerkConfigured && (
+            <>
+              <SignedOut><SignInButton mode="modal"><button type="button">Sign In</button></SignInButton></SignedOut>
+              <SignedIn><UserButton /></SignedIn>
+            </>
           )}
-          <div className="field">
-            <label>My Cases</label>
-            <div className="stack">
-              <div className="chip-list">
-                <button type="button" onClick={() => withStatus("Loading cases", loadCases)}>
-                  Refresh Cases
-                </button>
-                {cases.length > 0 && <span className="chip">{cases.length} case(s)</span>}
-              </div>
-              {cases.length === 0 ? (
-                <div className="empty">No cases found for this login yet.</div>
-              ) : (
-                <div className="event-list">
-                  {cases.map(custodyCase => (
-                    <div className="event" key={custodyCase.id}>
-                      <div>
-                        <strong>{custodyCase.name}</strong>
-                        <span>{custodyCase.timezone}</span>
-                      </div>
-                      <div className="event-meta">
-                        <span>{custodyCase.id}</span>
-                        <button
-                          type="button"
-                          onClick={() => setSettings(prev => ({ ...prev, caseId: custodyCase.id }))}
-                        >
-                          Use
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="field">
-            <label>Create Case</label>
-            <div className="stack">
-              <input
-                value={createCaseForm.name}
-                onChange={event => setCreateCaseForm({ ...createCaseForm, name: event.target.value })}
-                placeholder="Case name (e.g. Smith Kids)"
-              />
-              <input
-                value={createCaseForm.timezone}
-                onChange={event => setCreateCaseForm({ ...createCaseForm, timezone: event.target.value })}
-                placeholder="America/Los_Angeles"
-              />
-              <button type="button" onClick={() => withStatus("Creating case", createCase)}>
-                Create Case
-              </button>
-            </div>
-          </div>
-          <div className="field">
-            <label>Add Parent To Selected Case</label>
-            <div className="stack">
-              <div className="chip-list">
-                <span className="chip">
-                  My subject: {currentTokenClaims?.sub || "Sign in to load"}
-                </span>
-              </div>
-              <input
-                value={inviteMemberForm.externalSubject}
-                onChange={event => setInviteMemberForm({ ...inviteMemberForm, externalSubject: event.target.value })}
-                placeholder="Other parent's Clerk subject (sub)"
-              />
-              <input
-                value={inviteMemberForm.displayName}
-                onChange={event => setInviteMemberForm({ ...inviteMemberForm, displayName: event.target.value })}
-                placeholder="Other parent's display name"
-              />
-              <select
-                value={inviteMemberForm.role}
-                onChange={event => setInviteMemberForm({ ...inviteMemberForm, role: event.target.value })}
-              >
-                <option value="PARENT">PARENT</option>
-                <option value="ADMIN">ADMIN</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => withStatus("Adding parent", addCaseMember)}
-                disabled={!settings.caseId}
-              >
-                Add Parent
-              </button>
-            </div>
-          </div>
-          <div className="status">
-            <span>{status}</span>
-            {error && <span className="error">{error}</span>}
-          </div>
+          <button className={`gear-btn ${settingsOpen ? "open" : ""}`} onClick={() => setSettingsOpen(p => !p)} title="Settings">{"\u2699"}</button>
         </div>
       </header>
 
-      {settings.caseId && members.length >= 2 && (
-        <section className="card" style={{ margin: "1rem" }}>
-          <h3>Schedule Rule {scheduleRule ? "(active)" : "(not set — required before solving)"}</h3>
-          <div className="stack">
-            <div className="field">
-              <label>Anchor Date</label>
-              <input
-                type="date"
-                value={scheduleRuleForm.anchorDate}
-                onChange={e => setScheduleRuleForm(prev => ({ ...prev, anchorDate: e.target.value }))}
-              />
-              <small>The date when the repeating pattern starts for Parent A.</small>
-            </div>
-            <div className="field">
-              <label>Parent A</label>
-              <select
-                value={scheduleRuleForm.parentAId}
-                onChange={e => setScheduleRuleForm(prev => ({ ...prev, parentAId: e.target.value }))}
-              >
-                <option value="">Select parent A</option>
-                {members.map(m => (
-                  <option key={m.personId} value={m.personId}>{m.displayName}</option>
-                ))}
+      {/* ── Settings Drawer ── */}
+      {settingsOpen && (
+        <div className="settings-drawer">
+          <div className="section-title" style={{ borderTop: "none" }}>Connection</div>
+          <Field label="API Base URL">
+            <input value={settings.baseUrl} onChange={e => setSettings(p => ({ ...p, baseUrl: e.target.value }))} placeholder={`Auto: ${resolveBaseUrl(settings)}`} />
+          </Field>
+          {!clerkConfigured && (
+            <Field label="Bearer Token">
+              <input value={settings.token} onChange={e => setSettings(p => ({ ...p, token: e.target.value }))} placeholder="Paste JWT" />
+            </Field>
+          )}
+          {members.length > 0 && (
+            <Field label="Act As (testing)">
+              <select value={settings.subjectOverride} onChange={e => setSettings(p => ({ ...p, subjectOverride: e.target.value }))}>
+                <option value="">Myself ({claims?.sub ? shortId(claims.sub) : "\u2014"})</option>
+                {members.map(m => <option key={m.personId} value={m.externalSubject}>{m.displayName}</option>)}
               </select>
+            </Field>
+          )}
+
+          <div className="section-title">Case Setup</div>
+          <Field label="Create New Case">
+            <div className="stack">
+              <input value={createCaseForm.name} onChange={e => setCreateCaseForm(p => ({ ...p, name: e.target.value }))} placeholder="Case name" />
+              <input value={createCaseForm.timezone} onChange={e => setCreateCaseForm(p => ({ ...p, timezone: e.target.value }))} placeholder="America/Denver" />
+              <button onClick={() => withStatus("Creating case", createCase)}>Create</button>
             </div>
-            <div className="field">
-              <label>Parent B</label>
-              <select
-                value={scheduleRuleForm.parentBId}
-                onChange={e => setScheduleRuleForm(prev => ({ ...prev, parentBId: e.target.value }))}
-              >
-                <option value="">Select parent B</option>
-                {members.map(m => (
-                  <option key={m.personId} value={m.personId}>{m.displayName}</option>
-                ))}
+          </Field>
+          <Field label="Add Parent">
+            <div className="stack">
+              {claims?.sub && <small>My subject: {claims.sub}</small>}
+              <input value={inviteMemberForm.externalSubject} onChange={e => setInviteMemberForm(p => ({ ...p, externalSubject: e.target.value }))} placeholder="Other parent's Clerk subject" />
+              <input value={inviteMemberForm.displayName} onChange={e => setInviteMemberForm(p => ({ ...p, displayName: e.target.value }))} placeholder="Display name" />
+              <select value={inviteMemberForm.role} onChange={e => setInviteMemberForm(p => ({ ...p, role: e.target.value }))}>
+                <option value="PARENT">Parent</option>
+                <option value="ADMIN">Admin</option>
               </select>
+              <button onClick={() => withStatus("Adding parent", addCaseMember)} disabled={!settings.caseId}>Add Parent</button>
             </div>
-            <div className="field">
-              <label>Custody Pattern</label>
-              <input
-                value={scheduleRuleForm.pattern}
-                onChange={e => setScheduleRuleForm(prev => ({ ...prev, pattern: e.target.value.toUpperCase() }))}
-                placeholder="AABBAAABBAABBBB"
-              />
-              <small>A/B characters. Default 2-2-3: AABBAAABBAABBBB (14-day cycle).</small>
-            </div>
-            <button
-              type="button"
-              onClick={() => withStatus("Saving schedule rule", saveScheduleRule)}
-            >
-              {scheduleRule ? "Update Schedule Rule" : "Set Schedule Rule"}
-            </button>
-          </div>
-        </section>
+          </Field>
+          {members.length > 0 && (
+            <Field label="Members">
+              <div className="stack">
+                {members.map(m => (
+                  <span key={m.personId}>{m.displayName} ({m.role})</span>
+                ))}
+              </div>
+            </Field>
+          )}
+
+          {members.length >= 2 && (
+            <>
+              <div className="section-title">Schedule Rule</div>
+              <Field label="Anchor Date">
+                <input type="date" value={scheduleRuleForm.anchorDate} onChange={e => setScheduleRuleForm(p => ({ ...p, anchorDate: e.target.value }))} />
+                <small>Day 1 of the repeating pattern for Parent A</small>
+              </Field>
+              <Field label="Parent A">
+                <select value={scheduleRuleForm.parentAId} onChange={e => setScheduleRuleForm(p => ({ ...p, parentAId: e.target.value }))}>
+                  <option value="">Select...</option>
+                  {members.map(m => <option key={m.personId} value={m.personId}>{m.displayName}</option>)}
+                </select>
+              </Field>
+              <Field label="Parent B">
+                <select value={scheduleRuleForm.parentBId} onChange={e => setScheduleRuleForm(p => ({ ...p, parentBId: e.target.value }))}>
+                  <option value="">Select...</option>
+                  {members.map(m => <option key={m.personId} value={m.personId}>{m.displayName}</option>)}
+                </select>
+              </Field>
+              <Field label="Custody Pattern">
+                <input value={scheduleRuleForm.pattern} onChange={e => setScheduleRuleForm(p => ({ ...p, pattern: e.target.value.toUpperCase() }))} placeholder="AABBAAABBAABBBB" />
+                <small>A/B chars. Default 2-2-3: AABBAAABBAABBBB</small>
+              </Field>
+              <div>
+                <button className="primary" onClick={() => withStatus("Saving rule", saveScheduleRule)}>
+                  {scheduleRule ? "Update Rule" : "Set Rule"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
+      {/* ── Tabs ── */}
       <nav className="tabs">
         {TABS.map(tab => (
-          <button
-            key={tab}
-            className={tab === activeTab ? "active" : ""}
-            onClick={() => setActiveTab(tab)}
-          >
+          <button key={tab} className={tab === activeTab ? "active" : ""} onClick={() => setActiveTab(tab)}>
             {tab}
+            {tab === "Proposals" && pendingCount > 0 && <span className="badge">{pendingCount}</span>}
           </button>
         ))}
       </nav>
 
+      {/* ── Calendar Tab ── */}
       {activeTab === "Calendar" && (
-        <section className="calendar">
+        <section>
           <div className="calendar-header">
-            <div>
-              <h2>{formatMonthTitle(calendarMonth)}</h2>
-              <p>Accepted schedule assignments for this month.</p>
-            </div>
+            <h2>{fmtMonth(calendarMonth)}</h2>
             <div className="calendar-actions">
               <button onClick={() => setCalendarMonth(addDays(startOfMonth(calendarMonth), -1))}>Prev</button>
               <button onClick={() => setCalendarMonth(new Date())}>Today</button>
@@ -764,95 +550,142 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               <button onClick={() => withStatus("Refreshing", refreshCalendar)}>Refresh</button>
             </div>
           </div>
+          {scheduleRule && (
+            <div className="calendar-legend">
+              <div className="legend-item"><span className="legend-swatch parent-a" />{personLabel(scheduleRule.parentAId)}</div>
+              <div className="legend-item"><span className="legend-swatch parent-b" />{personLabel(scheduleRule.parentBId)}</div>
+            </div>
+          )}
           <div className="calendar-grid">
-            {monthGrid.map(({ date, current }, idx) => {
-              const iso = toDateInput(date);
-              const assignment = scheduleMap.get(iso);
-              const label = assignment
-                ? memberMap.get(assignment.assignedParentId) || assignment.assignedParentId.slice(0, 6)
-                : "—";
-              return (
-                <div key={`${iso}-${idx}`} className={`day ${current ? "" : "dim"}`}>
-                  <div className="day-top">
-                    <span>{date.getDate()}</span>
-                    {assignment?.lockedSourceEventId && <span className="lock">Locked</span>}
-                  </div>
-                  <div className="day-owner">{label}</div>
-                  <div className="day-meta">{assignment?.derivedFrom || "UNASSIGNED"}</div>
-                </div>
-              );
-            })}
+            {renderCalendarGrid(monthGrid, scheduleMap, null, calendarMonth)}
           </div>
         </section>
       )}
 
+      {/* ── Events Tab ── */}
       {activeTab === "Events" && (
-        <section className="events">
+        <section className="two-col">
           <div className="panel">
-            <h2>Event Log</h2>
-            <p>Events within the current month view.</p>
-            <button onClick={() => withStatus("Loading events", () => loadEvents(
-              toDateInput(startOfMonth(calendarMonth)),
-              toDateInput(endOfMonth(calendarMonth))
-            ))}>Refresh</button>
+            <h2>Events</h2>
+            <button onClick={() => withStatus("Loading events", () => loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth))))}>Refresh</button>
             <div className="event-list">
-              {events.length === 0 && <div className="empty">No events for this range.</div>}
-              {events.map(event => (
-                <div className="event" key={event.id}>
-                  <div>
-                    <strong>{event.title}</strong>
-                    <span>{event.startDate} to {event.endDate}</span>
-                  </div>
+              {events.length === 0 && <div className="empty">No events for this month.</div>}
+              {events.map(ev => (
+                <div className="event" key={ev.id}>
+                  <div><strong>{ev.title}</strong><br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span></div>
                   <div className="event-meta">
-                    <span>{event.eventType}</span>
-                    <span>{event.appliesTo}</span>
-                    <span>{event.locked ? "Locked" : "Flexible"}</span>
+                    <span>{ev.eventType.replace(/_/g, " ")}</span>
+                    <span>{ev.locked ? "Locked" : "Flexible"}</span>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-          <EventForm onSubmit={form => withStatus("Creating event", () => submitEvent(form))} />
+          <EventForm members={members} onSubmit={form => withStatus("Creating event", () => submitEvent(form))} />
         </section>
       )}
 
+      {/* ── School Days Tab ── */}
       {activeTab === "School Days" && (
-        <section className="events">
+        <section className="two-col">
           <div className="panel">
             <h2>School Calendar</h2>
-            <p>Define which days are school, break, or holiday for scoring.</p>
-            <button onClick={() => withStatus("Loading school days", () => loadSchoolDays(
-              toDateInput(startOfMonth(calendarMonth)),
-              toDateInput(endOfMonth(calendarMonth))
-            ))}>Refresh</button>
+            <button onClick={() => withStatus("Loading", () => loadSchoolDays(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth))))}>Refresh</button>
             <div className="event-list">
-              {schoolDays.length === 0 && <div className="empty">No school calendar days for this range.</div>}
-              {schoolDays.map(day => (
-                <div className="event" key={day.date}>
-                  <div>
-                    <strong>{day.date}</strong>
-                    <span>{day.dayType}</span>
-                  </div>
-                </div>
+              {schoolDays.length === 0 && <div className="empty">No school days for this range.</div>}
+              {schoolDays.map(d => (
+                <div className="event" key={d.date}><div><strong>{d.date}</strong> <span style={{ color: "var(--muted)" }}>{d.dayType}</span></div></div>
               ))}
             </div>
           </div>
           <div className="stacked-forms">
-            <SchoolDayForm onSubmit={form => withStatus("Saving school day", () => upsertSchoolDay(form))} />
-            <SchoolDayBulkForm onSubmit={form => withStatus("Generating school days", () => bulkGenerateSchoolDays(form))} />
+            <SchoolDayForm onSubmit={form => withStatus("Saving", () => upsertSchoolDay(form))} />
+            <SchoolDayBulkForm onSubmit={form => withStatus("Generating", () => bulkGenerateSchoolDays(form))} />
           </div>
         </section>
       )}
 
+      {/* ── Proposals Tab ── */}
+      {activeTab === "Proposals" && (
+        <section className="proposals-layout">
+          <div className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>Proposals</h2>
+              <button onClick={() => withStatus("Refreshing", loadProposals)}>Refresh</button>
+            </div>
+            <div className="proposal-list">
+              {proposals.length === 0 && <div className="empty">No proposals yet. Use the Solve tab to create one.</div>}
+              {proposals.map(p => {
+                const statusClass = p.status === "PENDING_APPROVAL" ? "pending" : p.status === "APPROVED" ? "approved" : "rejected";
+                const changeCount = p.optionSnapshot?.changedDays?.length || 0;
+                return (
+                  <div key={p.proposalId} className={`proposal-card ${previewProposalId === p.proposalId ? "selected" : ""}`} onClick={() => setPreviewProposalId(p.proposalId)}>
+                    <div className="proposal-header">
+                      <span className={`status-badge ${statusClass}`}>{p.status.replace(/_/g, " ")}</span>
+                      <span className="proposal-by">{relativeTime(p.createdAt)}</span>
+                    </div>
+                    <div className="proposal-by">by {p.createdByName || shortId(p.createdBy)}</div>
+                    {p.reason && <div className="proposal-reason">{p.reason}</div>}
+                    <div className="proposal-changes">{changeCount} day{changeCount !== 1 ? "s" : ""} changed</div>
+                    <div className="proposal-approvals">
+                      {(p.approvals || []).map(a => (
+                        <span key={a.personId} className={`approval-chip ${a.decision ? a.decision.toLowerCase() : "pending"}`}>
+                          {a.displayName || shortId(a.personId)} {a.decision === "APPROVE" ? "\u2713" : a.decision === "REJECT" ? "\u2717" : "\u2022\u2022\u2022"}
+                        </span>
+                      ))}
+                    </div>
+                    {p.status === "PENDING_APPROVAL" && (
+                      <div className="proposal-actions">
+                        <button className="btn-approve" onClick={e => { e.stopPropagation(); withStatus("Approving", () => approveProposal(p.proposalId)); }}>Approve</button>
+                        <button className="btn-reject" onClick={e => { e.stopPropagation(); withStatus("Rejecting", () => rejectProposal(p.proposalId)); }}>Reject</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="proposal-preview panel">
+            {!previewProposal ? (
+              <div className="empty" style={{ marginTop: 40 }}>Select a proposal to preview calendar changes.</div>
+            ) : (
+              <>
+                <div className="preview-header">
+                  <h3>Preview: Option {previewProposal.optionId}</h3>
+                  <span className={`status-badge ${previewProposal.status === "PENDING_APPROVAL" ? "pending" : previewProposal.status === "APPROVED" ? "approved" : "rejected"}`}>
+                    {previewProposal.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+                {previewProposal.optionSnapshot?.changedDays && (
+                  <div className="change-summary">
+                    {previewProposal.optionSnapshot.changedDays.slice(0, 8).map(ch => (
+                      <span key={ch.date} className="chip">{ch.date}: {personLabel(ch.fromParentId)} &rarr; {personLabel(ch.toParentId)}</span>
+                    ))}
+                    {previewProposal.optionSnapshot.changedDays.length > 8 && <span className="chip">+{previewProposal.optionSnapshot.changedDays.length - 8} more</span>}
+                  </div>
+                )}
+                {scheduleRule && (
+                  <div className="calendar-legend">
+                    <div className="legend-item"><span className="legend-swatch parent-a" />{personLabel(scheduleRule.parentAId)}</div>
+                    <div className="legend-item"><span className="legend-swatch parent-b" />{personLabel(scheduleRule.parentBId)}</div>
+                  </div>
+                )}
+                <div className="calendar-grid">
+                  {renderCalendarGrid(monthGrid, scheduleMap, proposalChangeMap, calendarMonth)}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── Solve Tab ── */}
       {activeTab === "Solve" && (
-        <section className="solve">
-          <SolveForm
-            members={members}
-            onSolve={form => withStatus("Solving schedule", () => solveSchedule(form))}
-          />
+        <section className="two-col">
+          <SolveForm members={members} onSolve={form => withStatus("Solving", () => solveSchedule(form))} />
           <div className="panel options">
-            <h2>Solver Options</h2>
-            {solveOptions.length === 0 && <div className="empty">Run solve to see options.</div>}
+            <h2>Options</h2>
+            {solveOptions.length === 0 && <div className="empty">Run the solver to see schedule options.</div>}
             {solveOptions.map(option => (
               <div className="option" key={option.optionId}>
                 <div className="option-header">
@@ -861,64 +694,37 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
                 </div>
                 <div className="option-grid">
                   <div>
-                    <h4>Score Breakdown</h4>
+                    <h4>How it rates</h4>
                     <ul>
-                      {Object.entries(option.scoreDetails || {}).map(([key, detail]) => (
-                        <li key={key}>
-                          <span>{labelScoreKey(key)} ({detail.count} x {detail.weight})</span>
-                          <span>{detail.score}</span>
-                        </li>
+                      {Object.entries(option.scoreDetails || {}).map(([key, d]) => (
+                        <li key={key}><span>{scoreLabel(key)} ({d.count} &times; {d.weight})</span><span>{d.score}</span></li>
                       ))}
-                      {(!option.scoreDetails || Object.keys(option.scoreDetails).length === 0) &&
-                        Object.entries(option.scoreBreakdown || {}).map(([key, value]) => (
-                          <li key={key}>
-                            <span>{labelScoreKey(key)}</span>
-                            <span>{value}</span>
-                          </li>
-                        ))}
+                      {(!option.scoreDetails || Object.keys(option.scoreDetails).length === 0) && Object.entries(option.scoreBreakdown || {}).map(([k, v]) => (
+                        <li key={k}><span>{scoreLabel(k)}</span><span>{v}</span></li>
+                      ))}
                     </ul>
                   </div>
                   <div>
-                    <h4>Changed Days</h4>
+                    <h4>Days that change</h4>
                     <div className="chip-list">
-                      {(option.changedDays || []).slice(0, 10).map(change => (
-                        <span key={change.date} className="chip">
-                          {change.date} {personLabel(change.fromParent)} -> {personLabel(change.toParent)}
-                        </span>
+                      {(option.changedDays || []).slice(0, 10).map(ch => (
+                        <span key={ch.date} className="chip">{ch.date} {personLabel(ch.fromParentId)} &rarr; {personLabel(ch.toParentId)}</span>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <h4>Owed Balances</h4>
+                    <h4>Balance after</h4>
                     <div className="stack">
-                      {(option.owedBalances || []).length === 0 && <span>None</span>}
-                      {(option.owedBalances || []).map((balance, idx) => (
-                        <span key={`${option.optionId}-owed-${idx}`}>
-                          {personLabel(balance.fromParent)} owes {personLabel(balance.toParent)}{" "}
-                          {balance.amountDays} {formatDayBucket(balance.dayBucket)} day{balance.amountDays === 1 ? "" : "s"}
-                        </span>
-                      ))}
-                    </div>
-                    <h4>Patch Operations</h4>
-                    <div className="stack">
-                      {(option.patchOperations || []).map((op, idx) => (
-                        <span key={`${option.optionId}-${idx}`}>{op}</span>
-                      ))}
-                      {(option.ledgerImpact || []).map((impact, idx) => (
-                        <span key={`${option.optionId}-ledger-${idx}`}>
-                          Ledger: {personLabel(impact.fromParent)} owes {personLabel(impact.toParent)}{" "}
-                          {impact.amountDays} {formatDayBucket(impact.dayBucket)} day{impact.amountDays === 1 ? "" : "s"}
-                        </span>
+                      {(option.owedBalances || []).length === 0 && <span>Even</span>}
+                      {(option.owedBalances || []).map((b, i) => (
+                        <span key={i}>{personLabel(b.fromParentId)} owes {personLabel(b.toParentId)} {b.amountDays} {fmtBucket(b.dayBucket)} day{b.amountDays === 1 ? "" : "s"}</span>
                       ))}
                     </div>
                   </div>
                 </div>
                 <div className="option-actions">
-                  <button
-                    className={selectedOption === option.optionId ? "primary" : ""}
-                    onClick={() => withStatus("Proposing option", () => proposeOption(option.optionId))}
-                  >
-                    {selectedOption === option.optionId ? "Proposed" : "Propose & Accept"}
+                  <button className={selectedOption === option.optionId ? "primary" : ""} onClick={() => withStatus("Sending for approval", () => proposeOption(option.optionId))}>
+                    {selectedOption === option.optionId ? "Sent" : "Send for Approval"}
                   </button>
                 </div>
               </div>
@@ -930,62 +736,38 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   );
 }
 
-function EventForm({ onSubmit }) {
-  const [form, setForm] = useState({
-    title: "School Break",
-    startDate: toDateInput(new Date()),
-    endDate: toDateInput(addDays(new Date(), 2)),
-    eventType: "VACATION_WITH_KIDS",
-    appliesTo: "KIDS_ASSIGNMENT",
-    parentId: "",
-    locked: false,
-    recurrenceRule: "",
-    notes: ""
-  });
+// ── Sub-components ──
 
+function EventForm({ members, onSubmit }) {
+  const [form, setForm] = useState({
+    title: "", startDate: toDateInput(new Date()), endDate: toDateInput(addDays(new Date(), 2)),
+    eventType: "VACATION_WITH_KIDS", appliesTo: "KIDS_ASSIGNMENT", parentId: "", locked: false, recurrenceRule: "", notes: ""
+  });
   return (
-    <div className="panel form">
+    <div className="panel">
       <h2>Add Event</h2>
       <div className="form-grid">
-        <Field label="Title">
-          <input value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} />
-        </Field>
-        <Field label="Start Date">
-          <input type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} />
-        </Field>
-        <Field label="End Date">
-          <input type="date" value={form.endDate} onChange={event => setForm({ ...form, endDate: event.target.value })} />
-        </Field>
-        <Field label="Event Type">
-          <select value={form.eventType} onChange={event => setForm({ ...form, eventType: event.target.value })}>
-            <option value="VACATION_WITH_KIDS">Vacation With Kids</option>
-            <option value="VACATION_NO_KIDS">Vacation No Kids</option>
-            <option value="HOLIDAY_LOCKED">Holiday Locked</option>
-            <option value="EXCEPTION_SWAP">Exception Swap</option>
+        <Field label="Title"><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Spring Break" /></Field>
+        <Field label="Start"><input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="End"><input type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+        <Field label="Type">
+          <select value={form.eventType} onChange={e => setForm({ ...form, eventType: e.target.value })}>
+            <option value="VACATION_WITH_KIDS">Vacation with kids</option>
+            <option value="VACATION_NO_KIDS">Vacation (no kids)</option>
+            <option value="HOLIDAY_LOCKED">Holiday (locked)</option>
+            <option value="EXCEPTION_SWAP">Exception swap</option>
           </select>
         </Field>
-        <Field label="Applies To">
-          <select value={form.appliesTo} onChange={event => setForm({ ...form, appliesTo: event.target.value })}>
-            <option value="KIDS_ASSIGNMENT">Kids Assignment</option>
-            <option value="PARENT_UNAVAILABLE">Parent Unavailable</option>
+        <Field label="Which Parent">
+          <select value={form.parentId} onChange={e => setForm({ ...form, parentId: e.target.value })}>
+            <option value="">Select...</option>
+            {(members || []).map(m => <option key={m.personId} value={m.personId}>{m.displayName}</option>)}
           </select>
-        </Field>
-        <Field label="Parent ID">
-          <input value={form.parentId} onChange={event => setForm({ ...form, parentId: event.target.value })} />
         </Field>
         <Field label="Locked">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={form.locked}
-              onChange={event => setForm({ ...form, locked: event.target.checked })}
-            />
-            <span>Lock event</span>
-          </label>
+          <label className="toggle"><input type="checkbox" checked={form.locked} onChange={e => setForm({ ...form, locked: e.target.checked })} /><span>Lock these days</span></label>
         </Field>
-        <Field label="Notes">
-          <input value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} />
-        </Field>
+        <Field label="Notes"><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional" /></Field>
       </div>
       <button className="primary" onClick={() => onSubmit(form)}>Create Event</button>
     </div>
@@ -994,115 +776,39 @@ function EventForm({ onSubmit }) {
 
 function SolveForm({ members, onSolve }) {
   const [form, setForm] = useState({
-    baselineOnly: false,
-    title: "Vacation Request",
-    startDate: toDateInput(addDays(new Date(), 10)),
-    endDate: toDateInput(addDays(new Date(), 14)),
-    horizonStart: toDateInput(startOfMonth(new Date())),
-    horizonEnd: toDateInput(endOfMonth(new Date())),
-    eventType: "VACATION_WITH_KIDS",
-    appliesTo: "KIDS_ASSIGNMENT",
-    parentId: "",
-    locked: false,
-    notes: ""
+    baselineOnly: false, title: "Vacation Request",
+    startDate: toDateInput(addDays(new Date(), 10)), endDate: toDateInput(addDays(new Date(), 14)),
+    horizonStart: toDateInput(startOfMonth(new Date())), horizonEnd: toDateInput(endOfMonth(new Date())),
+    eventType: "VACATION_WITH_KIDS", appliesTo: "KIDS_ASSIGNMENT", parentId: "", locked: false, notes: ""
   });
-
   return (
-    <div className="panel form">
+    <div className="panel">
       <h2>Run Solver</h2>
       <div className="form-grid">
-        <Field label="Baseline Only">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={form.baselineOnly}
-              onChange={event => setForm({ ...form, baselineOnly: event.target.checked })}
-            />
-            <span>Skip event</span>
-          </label>
+        <Field label="Just re-score current">
+          <label className="toggle"><input type="checkbox" checked={form.baselineOnly} onChange={e => setForm({ ...form, baselineOnly: e.target.checked })} /><span>Baseline only</span></label>
         </Field>
-        <Field label="Title">
-          <input
-            value={form.title}
-            onChange={event => setForm({ ...form, title: event.target.value })}
-            disabled={form.baselineOnly}
-          />
-        </Field>
-        <Field label="Event Start">
-          <input
-            type="date"
-            value={form.startDate}
-            onChange={event => setForm({ ...form, startDate: event.target.value })}
-            disabled={form.baselineOnly}
-          />
-        </Field>
-        <Field label="Event End">
-          <input
-            type="date"
-            value={form.endDate}
-            onChange={event => setForm({ ...form, endDate: event.target.value })}
-            disabled={form.baselineOnly}
-          />
-        </Field>
-        <Field label="Horizon Start">
-          <input type="date" value={form.horizonStart} onChange={event => setForm({ ...form, horizonStart: event.target.value })} />
-        </Field>
-        <Field label="Horizon End">
-          <input type="date" value={form.horizonEnd} onChange={event => setForm({ ...form, horizonEnd: event.target.value })} />
-        </Field>
-        <Field label="Parent ID">
-          <select
-            value={form.parentId}
-            onChange={event => setForm({ ...form, parentId: event.target.value })}
-            disabled={form.baselineOnly}
-          >
-            <option value="">Select parent</option>
-            {members.map(member => (
-              <option key={member.personId} value={member.personId}>
-                {member.displayName || member.personId}
-              </option>
-            ))}
+        <Field label="What's happening?"><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} disabled={form.baselineOnly} /></Field>
+        <Field label="Event from"><input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} disabled={form.baselineOnly} /></Field>
+        <Field label="Event to"><input type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} disabled={form.baselineOnly} /></Field>
+        <Field label="Schedule from"><input type="date" value={form.horizonStart} onChange={e => setForm({ ...form, horizonStart: e.target.value })} /></Field>
+        <Field label="Schedule to"><input type="date" value={form.horizonEnd} onChange={e => setForm({ ...form, horizonEnd: e.target.value })} /></Field>
+        <Field label="Which parent?">
+          <select value={form.parentId} onChange={e => setForm({ ...form, parentId: e.target.value })} disabled={form.baselineOnly}>
+            <option value="">Select...</option>
+            {members.map(m => <option key={m.personId} value={m.personId}>{m.displayName}</option>)}
           </select>
         </Field>
-        <Field label="Event Type">
-          <select
-            value={form.eventType}
-            onChange={event => setForm({ ...form, eventType: event.target.value })}
-            disabled={form.baselineOnly}
-          >
-            <option value="VACATION_WITH_KIDS">Vacation With Kids</option>
-            <option value="VACATION_NO_KIDS">Vacation No Kids</option>
-            <option value="HOLIDAY_LOCKED">Holiday Locked</option>
-            <option value="EXCEPTION_SWAP">Exception Swap</option>
+        <Field label="Type">
+          <select value={form.eventType} onChange={e => setForm({ ...form, eventType: e.target.value })} disabled={form.baselineOnly}>
+            <option value="VACATION_WITH_KIDS">Vacation with kids</option>
+            <option value="VACATION_NO_KIDS">Vacation (no kids)</option>
+            <option value="HOLIDAY_LOCKED">Holiday (locked)</option>
+            <option value="EXCEPTION_SWAP">Exception swap</option>
           </select>
         </Field>
-        <Field label="Applies To">
-          <select
-            value={form.appliesTo}
-            onChange={event => setForm({ ...form, appliesTo: event.target.value })}
-            disabled={form.baselineOnly}
-          >
-            <option value="KIDS_ASSIGNMENT">Kids Assignment</option>
-            <option value="PARENT_UNAVAILABLE">Parent Unavailable</option>
-          </select>
-        </Field>
-        <Field label="Locked">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={form.locked}
-              onChange={event => setForm({ ...form, locked: event.target.checked })}
-              disabled={form.baselineOnly}
-            />
-            <span>Lock event</span>
-          </label>
-        </Field>
-        <Field label="Notes">
-          <input
-            value={form.notes}
-            onChange={event => setForm({ ...form, notes: event.target.value })}
-            disabled={form.baselineOnly}
-          />
+        <Field label="Lock days">
+          <label className="toggle"><input type="checkbox" checked={form.locked} onChange={e => setForm({ ...form, locked: e.target.checked })} disabled={form.baselineOnly} /><span>Must keep these days</span></label>
         </Field>
       </div>
       <button className="primary" onClick={() => onSolve(form)}>Solve</button>
@@ -1111,29 +817,15 @@ function SolveForm({ members, onSolve }) {
 }
 
 function SchoolDayForm({ onSubmit }) {
-  const [form, setForm] = useState({
-    date: toDateInput(new Date()),
-    dayType: "SCHOOL"
-  });
-
+  const [form, setForm] = useState({ date: toDateInput(new Date()), dayType: "SCHOOL" });
   return (
-    <div className="panel form">
+    <div className="panel">
       <h2>Add School Day</h2>
       <div className="form-grid">
-        <Field label="Date">
-          <input
-            type="date"
-            value={form.date}
-            onChange={event => setForm({ ...form, date: event.target.value })}
-          />
-        </Field>
+        <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
         <Field label="Day Type">
-          <select value={form.dayType} onChange={event => setForm({ ...form, dayType: event.target.value })}>
-            <option value="SCHOOL">School</option>
-            <option value="BREAK">Break</option>
-            <option value="WEEKEND">Weekend</option>
-            <option value="HOLIDAY">Holiday</option>
-            <option value="IN_SERVICE">In Service</option>
+          <select value={form.dayType} onChange={e => setForm({ ...form, dayType: e.target.value })}>
+            <option value="SCHOOL">School</option><option value="BREAK">Break</option><option value="WEEKEND">Weekend</option><option value="HOLIDAY">Holiday</option><option value="IN_SERVICE">In Service</option>
           </select>
         </Field>
       </div>
@@ -1143,77 +835,38 @@ function SchoolDayForm({ onSubmit }) {
 }
 
 function SchoolDayBulkForm({ onSubmit }) {
-  const [form, setForm] = useState({
-    startDate: "2025-08-04",
-    endDate: "2026-05-25",
-    dayType: "SCHOOL",
-    daysOfWeek: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"]
-  });
-
+  const [form, setForm] = useState({ startDate: "2025-08-04", endDate: "2026-05-25", dayType: "SCHOOL", daysOfWeek: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"] });
   function toggleDay(day) {
     const set = new Set(form.daysOfWeek);
-    if (set.has(day)) {
-      set.delete(day);
-    } else {
-      set.add(day);
-    }
+    set.has(day) ? set.delete(day) : set.add(day);
     setForm({ ...form, daysOfWeek: Array.from(set) });
   }
-
-  const dayOptions = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
-
   return (
-    <div className="panel form">
+    <div className="panel">
       <h2>Bulk Generate</h2>
       <div className="form-grid">
-        <Field label="Start Date">
-          <input
-            type="date"
-            value={form.startDate}
-            onChange={event => setForm({ ...form, startDate: event.target.value })}
-          />
-        </Field>
-        <Field label="End Date">
-          <input
-            type="date"
-            value={form.endDate}
-            onChange={event => setForm({ ...form, endDate: event.target.value })}
-          />
-        </Field>
-        <Field label="Day Type">
-          <select value={form.dayType} onChange={event => setForm({ ...form, dayType: event.target.value })}>
-            <option value="SCHOOL">School</option>
-            <option value="BREAK">Break</option>
-            <option value="WEEKEND">Weekend</option>
-            <option value="HOLIDAY">Holiday</option>
-            <option value="IN_SERVICE">In Service</option>
+        <Field label="Start"><input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="End"><input type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+        <Field label="Type">
+          <select value={form.dayType} onChange={e => setForm({ ...form, dayType: e.target.value })}>
+            <option value="SCHOOL">School</option><option value="BREAK">Break</option><option value="WEEKEND">Weekend</option><option value="HOLIDAY">Holiday</option><option value="IN_SERVICE">In Service</option>
           </select>
         </Field>
-        <Field label="Days Of Week">
+        <Field label="Days">
           <div className="day-toggle-grid">
-            {dayOptions.map(day => (
-              <label key={day} className={`day-toggle ${form.daysOfWeek.includes(day) ? "active" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={form.daysOfWeek.includes(day)}
-                  onChange={() => toggleDay(day)}
-                />
-                <span>{day.slice(0, 3)}</span>
+            {["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"].map(d => (
+              <label key={d} className={`day-toggle ${form.daysOfWeek.includes(d) ? "active" : ""}`}>
+                <input type="checkbox" checked={form.daysOfWeek.includes(d)} onChange={() => toggleDay(d)} /><span>{d.slice(0,3)}</span>
               </label>
             ))}
           </div>
         </Field>
       </div>
-      <button className="primary" onClick={() => onSubmit(form)}>Generate Days</button>
+      <button className="primary" onClick={() => onSubmit(form)}>Generate</button>
     </div>
   );
 }
 
 function Field({ label, children }) {
-  return (
-    <div className="field">
-      <label>{label}</label>
-      {children}
-    </div>
-  );
+  return <div className="field"><label>{label}</label>{children}</div>;
 }
