@@ -8,6 +8,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "schedule_proposals")
@@ -33,9 +35,11 @@ public class ScheduleProposal {
     private String optionId;
 
     @Column(name = "solve_command_json", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
     private String solveCommandJson;
 
     @Column(name = "option_snapshot_json", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
     private String optionSnapshotJson;
 
     @Column
