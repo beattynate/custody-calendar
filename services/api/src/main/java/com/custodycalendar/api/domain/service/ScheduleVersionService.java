@@ -1,17 +1,24 @@
 package com.custodycalendar.api.domain.service;
 
+import com.custodycalendar.api.domain.model.Event;
+import com.custodycalendar.api.domain.model.EventApprovalStatus;
 import com.custodycalendar.api.domain.model.LedgerEntry;
 import com.custodycalendar.api.domain.model.LedgerDayBucket;
 import com.custodycalendar.api.domain.model.LedgerReasonType;
+import com.custodycalendar.api.domain.model.ScheduleRule;
 import com.custodycalendar.api.domain.model.Person;
 import com.custodycalendar.api.domain.model.ScheduleDay;
 import com.custodycalendar.api.domain.model.ScheduleDayId;
 import com.custodycalendar.api.domain.model.ScheduleVersion;
 import com.custodycalendar.api.domain.model.ScheduleVersionStatus;
+import com.custodycalendar.api.domain.repository.EventRepository;
 import com.custodycalendar.api.domain.repository.LedgerEntryRepository;
 import com.custodycalendar.api.domain.repository.PersonRepository;
 import com.custodycalendar.api.domain.repository.ScheduleDayRepository;
+import com.custodycalendar.api.domain.repository.ScheduleRuleRepository;
 import com.custodycalendar.api.domain.repository.ScheduleVersionRepository;
+import com.custodycalendar.api.domain.solver.BaselineScheduleGenerator;
+import com.custodycalendar.api.domain.solver.LockedEventApplier;
 import com.custodycalendar.api.domain.solver.ScheduleAssignmentSet;
 import com.custodycalendar.api.domain.solver.ScheduleSolveCommand;
 import com.custodycalendar.api.domain.solver.SolveComputationResult;
@@ -38,6 +45,10 @@ public class ScheduleVersionService {
     private final ScheduleVersionRepository scheduleVersionRepository;
     private final ScheduleDayRepository scheduleDayRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
+    private final ScheduleRuleRepository scheduleRuleRepository;
+    private final EventRepository eventRepository;
+    private final BaselineScheduleGenerator baselineScheduleGenerator;
+    private final LockedEventApplier lockedEventApplier;
     private final ScheduleSolveService scheduleSolveService;
     private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
@@ -48,6 +59,10 @@ public class ScheduleVersionService {
             ScheduleVersionRepository scheduleVersionRepository,
             ScheduleDayRepository scheduleDayRepository,
             LedgerEntryRepository ledgerEntryRepository,
+            ScheduleRuleRepository scheduleRuleRepository,
+            EventRepository eventRepository,
+            BaselineScheduleGenerator baselineScheduleGenerator,
+            LockedEventApplier lockedEventApplier,
             ScheduleSolveService scheduleSolveService,
             AuditLogService auditLogService,
             ObjectMapper objectMapper) {
@@ -56,6 +71,10 @@ public class ScheduleVersionService {
         this.scheduleVersionRepository = scheduleVersionRepository;
         this.scheduleDayRepository = scheduleDayRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
+        this.scheduleRuleRepository = scheduleRuleRepository;
+        this.eventRepository = eventRepository;
+        this.baselineScheduleGenerator = baselineScheduleGenerator;
+        this.lockedEventApplier = lockedEventApplier;
         this.scheduleSolveService = scheduleSolveService;
         this.auditLogService = auditLogService;
         this.objectMapper = objectMapper;
@@ -120,14 +139,32 @@ public class ScheduleVersionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "to must be on or after from");
         }
 
-        ScheduleVersion accepted = scheduleVersionRepository
+        return scheduleVersionRepository
                 .findFirstByCaseIdAndStatusOrderByCreatedAtDesc(caseId, ScheduleVersionStatus.ACCEPTED)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No accepted schedule found"));
+                .map(accepted -> new ScheduleRangeResult(
+                        accepted.getId(),
+                        accepted.getStatus().name(),
+                        scheduleDayRepository.findByIdVersionIdAndIdDateBetweenOrderByIdDateAsc(accepted.getId(), from, to)))
+                .orElseGet(() -> generateBaselineRange(caseId, from, to));
+    }
 
-        List<ScheduleDay> days = scheduleDayRepository
-                .findByIdVersionIdAndIdDateBetweenOrderByIdDateAsc(accepted.getId(), from, to);
+    /**
+     * Before any version has been accepted, fall back to the live baseline
+     * (pattern rule plus approved locked events) so the calendar is never
+     * empty once a schedule rule exists. The returned days are transient.
+     */
+    private ScheduleRangeResult generateBaselineRange(UUID caseId, LocalDate from, LocalDate to) {
+        ScheduleRule rule = scheduleRuleRepository.findByCaseId(caseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No accepted schedule or schedule rule found"));
 
-        return new ScheduleRangeResult(accepted.getId(), accepted.getStatus().name(), days);
+        ScheduleAssignmentSet baseline = baselineScheduleGenerator.generate(rule, from, to);
+        List<Event> events = eventRepository
+                .findByCaseIdAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByStartDateAsc(caseId, to, from)
+                .stream()
+                .filter(event -> event.getApprovalStatus() != EventApprovalStatus.PENDING_CREATE)
+                .toList();
+        ScheduleAssignmentSet withLocked = lockedEventApplier.applyLockedEvents(baseline, events);
+        return new ScheduleRangeResult(null, "BASELINE", materializeDays(null, withLocked));
     }
 
     private String serializePreferences(SolveOptionResult selected, ScheduleSolveCommand command) {

@@ -113,6 +113,15 @@ class EventConsentIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void scheduleFallsBackToBaselineBeforeFirstAcceptedVersion() throws Exception {
+        mockMvc.perform(get("/api/v1/cases/{caseId}/schedule?from=2026-06-01&to=2026-06-14", caseId).with(asA()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(14))
+                .andExpect(jsonPath("$[0].date").value("2026-06-01"))
+                .andExpect(jsonPath("$[0].derivedFrom").value("BASELINE"));
+    }
+
+    @Test
     void nonLockedEventsApplyImmediatelyAndDeleteDirectly() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/cases/{caseId}/events", caseId)
                         .with(asA())

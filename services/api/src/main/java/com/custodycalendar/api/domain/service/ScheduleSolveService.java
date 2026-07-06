@@ -97,7 +97,8 @@ public class ScheduleSolveService {
                     lockedBaseline,
                     command.weights(),
                     totalOwedDays(currentOwedBalances),
-                    Set.of());
+                    Set.of(),
+                    schoolDayTypes);
             SolveOptionResult option = new SolveOptionResult(
                     "A",
                     score.total(),
@@ -143,7 +144,8 @@ public class ScheduleSolveService {
                     lockedBaseline,
                     command.weights(),
                     totalOwedDays(projectedOwedBalances),
-                    transitionExcludedDates(generated.appliedEvent()));
+                    transitionExcludedDates(generated.appliedEvent()),
+                    schoolDayTypes);
             optionOrdinal++;
             validOptions.add(new SolveOptionResult(
                     String.valueOf((char) ('A' + (optionOrdinal - 1))),
