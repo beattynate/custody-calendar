@@ -10,6 +10,7 @@ import com.custodycalendar.api.domain.service.AuditLogService;
 import com.custodycalendar.api.domain.service.CaseResourceService;
 import com.custodycalendar.api.domain.service.PersonDirectoryService;
 import com.custodycalendar.api.domain.service.LedgerService;
+import com.custodycalendar.api.domain.service.ScheduleIcsService;
 import com.custodycalendar.api.domain.service.ScheduleProposalService;
 import com.custodycalendar.api.domain.service.ScheduleSolveService;
 import com.custodycalendar.api.domain.service.ScheduleVersionService;
@@ -82,6 +83,7 @@ public class CaseResourceController {
     private final ScheduleVersionService scheduleVersionService;
     private final SchoolCalendarService schoolCalendarService;
     private final LedgerService ledgerService;
+    private final ScheduleIcsService scheduleIcsService;
     private final AuditLogService auditLogService;
     private final AuthenticatedUserService authenticatedUserService;
     private final PersonDirectoryService personDirectoryService;
@@ -96,6 +98,7 @@ public class CaseResourceController {
             ScheduleVersionService scheduleVersionService,
             SchoolCalendarService schoolCalendarService,
             LedgerService ledgerService,
+            ScheduleIcsService scheduleIcsService,
             AuditLogService auditLogService,
             AuthenticatedUserService authenticatedUserService,
             PersonDirectoryService personDirectoryService,
@@ -108,6 +111,7 @@ public class CaseResourceController {
         this.scheduleVersionService = scheduleVersionService;
         this.schoolCalendarService = schoolCalendarService;
         this.ledgerService = ledgerService;
+        this.scheduleIcsService = scheduleIcsService;
         this.auditLogService = auditLogService;
         this.authenticatedUserService = authenticatedUserService;
         this.personDirectoryService = personDirectoryService;
@@ -376,6 +380,17 @@ public class CaseResourceController {
                         balance.amountDays(),
                         balance.dayBucket() == null ? null : balance.dayBucket().name()))
                 .toList();
+    }
+
+    @GetMapping(value = "/schedule.ics", produces = "text/calendar")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public org.springframework.http.ResponseEntity<String> exportScheduleIcs(
+            @PathVariable UUID caseId,
+            @RequestParam @NotNull @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @NotNull @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=custody-schedule.ics")
+                .body(scheduleIcsService.buildIcs(caseId, from, to));
     }
 
     @GetMapping("/audit")

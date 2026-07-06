@@ -29,6 +29,24 @@ Identities can only be linked to or removed from yourself (`/api/v1/me/identitie
 already belongs to another person is rejected. Approvals made by a linked login count as the
 person they are linked to — the two-parent approval rule still requires the other parent.
 
+## Consent & audit
+- Locked events (hard schedule overrides) require the other schedule-rule parent's approval to
+  create, edit, or delete. Non-locked events apply immediately.
+- Schedule rule changes require the other parent's approval once a rule exists; initial creation
+  applies directly so onboarding is not blocked.
+- Every member/event/rule/proposal/schedule action is written to an immutable per-case audit log
+  (`GET /cases/{id}/audit`, "Activity" tab in the web app).
+
+## Ledger
+Owed-day entries recorded by approved proposals are listed at `GET /cases/{id}/ledger`, with
+netted balances at `/ledger/balance` ("Ledger" tab in the web app).
+
+## Calendar extras
+- `GET /cases/{id}/schedule` falls back to the generated baseline before any version is accepted.
+- `GET /cases/{id}/schedule.ics?from&to` exports custody runs as an iCalendar file ("Export .ics"
+  button), importable into Google/Apple/Outlook calendars.
+- The web app is installable to a phone home screen (PWA manifest + icons).
+
 ## Notes
 - Flyway migrations live in `services/api/src/main/resources/db/migration`.
 - JWT verification is configured as a resource server skeleton and expects a JWK set URI.

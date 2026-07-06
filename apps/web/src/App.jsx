@@ -368,6 +368,23 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     await loadScheduleRule();
   }
 
+  async function exportIcs() {
+    const s = api();
+    const from = toDateInput(startOfMonth(calendarMonth));
+    const to = toDateInput(addDays(startOfMonth(calendarMonth), 180));
+    const headers = {};
+    if (s.token) headers.Authorization = `Bearer ${s.token}`;
+    if (s.subjectOverride) headers["X-Subject-Override"] = s.subjectOverride;
+    const res = await fetch(`${s.baseUrl}/api/v1/cases/${s.caseId}/schedule.ics?from=${from}&to=${to}`, { headers });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "custody-schedule.ics";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function loadAudit() {
     if (!settings.caseId) return;
     setAuditEntries((await apiRequest(`/api/v1/cases/${settings.caseId}/audit`, api())) || []);
@@ -640,6 +657,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               <button onClick={() => setCalendarMonth(new Date())}>Today</button>
               <button onClick={() => setCalendarMonth(addDays(endOfMonth(calendarMonth), 1))}>Next</button>
               <button onClick={() => withStatus("Refreshing", refreshCalendar)}>Refresh</button>
+              <button onClick={() => withStatus("Exporting", exportIcs)} title="Download the next 6 months as an .ics file for Google/Apple Calendar">Export .ics</button>
             </div>
           </div>
           {scheduleRule && (

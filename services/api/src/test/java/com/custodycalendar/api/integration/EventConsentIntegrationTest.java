@@ -122,6 +122,17 @@ class EventConsentIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void icsExportContainsCustodyRuns() throws Exception {
+        MvcResult ics = mockMvc.perform(get("/api/v1/cases/{caseId}/schedule.ics?from=2026-06-01&to=2026-06-14", caseId).with(asA()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String body = ics.getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).contains("BEGIN:VCALENDAR");
+        org.assertj.core.api.Assertions.assertThat(body).contains("SUMMARY:Kids with ");
+        org.assertj.core.api.Assertions.assertThat(body).contains("DTSTART;VALUE=DATE:20260601");
+    }
+
+    @Test
     void nonLockedEventsApplyImmediatelyAndDeleteDirectly() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/cases/{caseId}/events", caseId)
                         .with(asA())
