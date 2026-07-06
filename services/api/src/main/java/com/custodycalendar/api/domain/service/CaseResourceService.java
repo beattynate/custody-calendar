@@ -32,6 +32,7 @@ public class CaseResourceService {
 
     private final CaseService caseService;
     private final PersonRepository personRepository;
+    private final PersonDirectoryService personDirectoryService;
     private final CaseMemberRepository caseMemberRepository;
     private final ChildRepository childRepository;
     private final ScheduleRuleRepository scheduleRuleRepository;
@@ -40,12 +41,14 @@ public class CaseResourceService {
     public CaseResourceService(
             CaseService caseService,
             PersonRepository personRepository,
+            PersonDirectoryService personDirectoryService,
             CaseMemberRepository caseMemberRepository,
             ChildRepository childRepository,
             ScheduleRuleRepository scheduleRuleRepository,
             EventRepository eventRepository) {
         this.caseService = caseService;
         this.personRepository = personRepository;
+        this.personDirectoryService = personDirectoryService;
         this.caseMemberRepository = caseMemberRepository;
         this.childRepository = childRepository;
         this.scheduleRuleRepository = scheduleRuleRepository;
@@ -76,15 +79,7 @@ public class CaseResourceService {
     public CaseMemberView addMember(UUID caseId, String externalSubject, String displayName, MemberRole role) {
         caseService.requireCase(caseId);
 
-        Person person = personRepository.findByExternalSubject(externalSubject)
-                .orElseGet(() -> {
-                    Person created = new Person();
-                    created.setId(UUID.randomUUID());
-                    created.setExternalSubject(externalSubject);
-                    return created;
-                });
-        person.setDisplayName(displayName);
-        person = personRepository.save(person);
+        Person person = personDirectoryService.ensurePerson(externalSubject, displayName);
 
         CaseMemberId memberId = new CaseMemberId();
         memberId.setCaseId(caseId);

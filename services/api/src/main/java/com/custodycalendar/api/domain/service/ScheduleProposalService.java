@@ -34,6 +34,7 @@ public class ScheduleProposalService {
 
     private final CaseService caseService;
     private final PersonRepository personRepository;
+    private final PersonDirectoryService personDirectoryService;
     private final ScheduleRuleRepository scheduleRuleRepository;
     private final ScheduleProposalRepository scheduleProposalRepository;
     private final ScheduleProposalApprovalRepository scheduleProposalApprovalRepository;
@@ -44,6 +45,7 @@ public class ScheduleProposalService {
     public ScheduleProposalService(
             CaseService caseService,
             PersonRepository personRepository,
+            PersonDirectoryService personDirectoryService,
             ScheduleRuleRepository scheduleRuleRepository,
             ScheduleProposalRepository scheduleProposalRepository,
             ScheduleProposalApprovalRepository scheduleProposalApprovalRepository,
@@ -52,6 +54,7 @@ public class ScheduleProposalService {
             ObjectMapper objectMapper) {
         this.caseService = caseService;
         this.personRepository = personRepository;
+        this.personDirectoryService = personDirectoryService;
         this.scheduleRuleRepository = scheduleRuleRepository;
         this.scheduleProposalRepository = scheduleProposalRepository;
         this.scheduleProposalApprovalRepository = scheduleProposalApprovalRepository;
@@ -230,8 +233,7 @@ public class ScheduleProposalService {
     }
 
     private Person requirePerson(String externalSubject) {
-        return personRepository.findByExternalSubject(externalSubject)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Authenticated person record not found"));
+        return personDirectoryService.requireBySubject(externalSubject);
     }
 
     private ScheduleRule requireScheduleRule(UUID caseId) {

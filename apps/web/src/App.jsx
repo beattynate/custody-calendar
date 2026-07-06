@@ -36,7 +36,10 @@ function persistSettings(s) {
 }
 
 function toDateInput(date) {
-  return date.toISOString().slice(0, 10);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function startOfMonth(date) {
@@ -142,6 +145,8 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [scheduleRuleForm, setScheduleRuleForm] = useState({ anchorDate: "", parentAId: "", parentBId: "", pattern: "AABBAAABBAABBBB" });
   const [proposals, setProposals] = useState([]);
   const [previewProposalId, setPreviewProposalId] = useState(null);
+  const [identities, setIdentities] = useState([]);
+  const [linkForm, setLinkForm] = useState({ externalSubject: "", label: "" });
 
   // Resolved API settings
   function api() {
@@ -193,6 +198,13 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
       setScheduleRule(null);
     }
   }, [settings.caseId, settings.token]);
+
+  // Linked logins for the settings drawer
+  useEffect(() => {
+    if (settingsOpen && settings.token) {
+      loadIdentities().catch(() => {});
+    }
+  }, [settingsOpen, settings.token, settings.subjectOverride]);
 
   // Tab data loading
   useEffect(() => {
@@ -329,6 +341,25 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     setStatus("Pending Approval");
   }
 
+  async function loadIdentities() {
+    if (!settings.token) { setIdentities([]); return; }
+    try { setIdentities((await apiRequest("/api/v1/me/identities", api())) || []); }
+    catch { setIdentities([]); }
+  }
+
+  async function linkIdentity() {
+    const externalSubject = linkForm.externalSubject.trim();
+    if (!externalSubject) throw new Error("The other login's subject is required.");
+    await apiRequest("/api/v1/me/identities", { ...api(), method: "POST", body: { externalSubject, label: linkForm.label.trim() || null } });
+    setLinkForm({ externalSubject: "", label: "" });
+    await loadIdentities();
+  }
+
+  async function unlinkIdentity(identityId) {
+    await apiRequest(`/api/v1/me/identities/${identityId}`, { ...api(), method: "DELETE" });
+    await loadIdentities();
+  }
+
   async function loadProposals() {
     if (!settings.caseId) return;
     setProposals((await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, api())) || []);
@@ -463,6 +494,34 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
                 {members.map(m => <option key={m.personId} value={m.externalSubject}>{m.displayName}</option>)}
               </select>
             </Field>
+          )}
+
+          {settings.token && (
+            <>
+              <div className="section-title">Linked Logins</div>
+              <Field label="Logins that act as me">
+                <div className="stack">
+                  {identities.length === 0 && <small>No person record yet. Create or join a case first.</small>}
+                  {identities.map(idn => (
+                    <span key={idn.id}>
+                      {idn.label || "Login"}: {idn.externalSubject}
+                      {idn.primary ? " (primary)" : idn.current ? " (this login)" : ""}
+                      {!idn.primary && !idn.current && (
+                        <button style={{ marginLeft: 8 }} onClick={() => withStatus("Removing login", () => unlinkIdentity(idn.id))}>Remove</button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Link Another Login">
+                <div className="stack">
+                  <small>Have them sign in on their device, copy "My subject" from their Settings, and paste it here. They will act as you: same calendar, same approvals.</small>
+                  <input value={linkForm.externalSubject} onChange={e => setLinkForm(p => ({ ...p, externalSubject: e.target.value }))} placeholder="Their Clerk subject (user_...)" />
+                  <input value={linkForm.label} onChange={e => setLinkForm(p => ({ ...p, label: e.target.value }))} placeholder="Label (e.g. partner's name)" />
+                  <button onClick={() => withStatus("Linking login", linkIdentity)}>Link Login</button>
+                </div>
+              </Field>
+            </>
           )}
 
           <div className="section-title">Case Setup</div>

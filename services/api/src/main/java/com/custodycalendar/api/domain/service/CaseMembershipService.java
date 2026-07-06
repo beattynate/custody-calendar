@@ -1,7 +1,6 @@
 package com.custodycalendar.api.domain.service;
 
 import com.custodycalendar.api.domain.repository.CaseMemberRepository;
-import com.custodycalendar.api.domain.repository.PersonRepository;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -9,11 +8,11 @@ import org.springframework.stereotype.Service;
 public class CaseMembershipService {
 
     private final CaseMemberRepository caseMemberRepository;
-    private final PersonRepository personRepository;
+    private final PersonDirectoryService personDirectoryService;
 
-    public CaseMembershipService(CaseMemberRepository caseMemberRepository, PersonRepository personRepository) {
+    public CaseMembershipService(CaseMemberRepository caseMemberRepository, PersonDirectoryService personDirectoryService) {
         this.caseMemberRepository = caseMemberRepository;
-        this.personRepository = personRepository;
+        this.personDirectoryService = personDirectoryService;
     }
 
     public boolean isCaseMember(UUID caseId, UUID personId) {
@@ -21,7 +20,7 @@ public class CaseMembershipService {
     }
 
     public boolean isCaseMemberByExternalSubject(UUID caseId, String externalSubject) {
-        return personRepository.findByExternalSubject(externalSubject)
+        return personDirectoryService.findBySubject(externalSubject)
                 .map(person -> caseMemberRepository.existsByIdCaseIdAndIdPersonId(caseId, person.getId()))
                 .orElse(false);
     }

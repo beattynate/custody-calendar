@@ -34,6 +34,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class ScheduleVersionService {
 
     private final PersonRepository personRepository;
+    private final PersonDirectoryService personDirectoryService;
     private final ScheduleVersionRepository scheduleVersionRepository;
     private final ScheduleDayRepository scheduleDayRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
@@ -42,12 +43,14 @@ public class ScheduleVersionService {
 
     public ScheduleVersionService(
             PersonRepository personRepository,
+            PersonDirectoryService personDirectoryService,
             ScheduleVersionRepository scheduleVersionRepository,
             ScheduleDayRepository scheduleDayRepository,
             LedgerEntryRepository ledgerEntryRepository,
             ScheduleSolveService scheduleSolveService,
             ObjectMapper objectMapper) {
         this.personRepository = personRepository;
+        this.personDirectoryService = personDirectoryService;
         this.scheduleVersionRepository = scheduleVersionRepository;
         this.scheduleDayRepository = scheduleDayRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
@@ -62,8 +65,7 @@ public class ScheduleVersionService {
             String optionId,
             ScheduleSolveCommand command,
             String reason) {
-        Person actor = personRepository.findByExternalSubject(externalSubject)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Authenticated person record not found"));
+        Person actor = personDirectoryService.requireBySubject(externalSubject);
 
         SolveComputationResult solveResult = scheduleSolveService.solveDetailed(caseId, command);
         SolveOptionResult selected = solveResult.options().stream()
