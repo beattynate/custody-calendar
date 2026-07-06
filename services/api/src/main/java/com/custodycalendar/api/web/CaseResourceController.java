@@ -5,6 +5,7 @@ import com.custodycalendar.api.domain.model.Child;
 import com.custodycalendar.api.domain.model.Event;
 import com.custodycalendar.api.domain.model.ScheduleRule;
 import com.custodycalendar.api.domain.service.CaseResourceService;
+import com.custodycalendar.api.domain.service.LedgerService;
 import com.custodycalendar.api.domain.service.ScheduleProposalService;
 import com.custodycalendar.api.domain.service.ScheduleSolveService;
 import com.custodycalendar.api.domain.service.ScheduleVersionService;
@@ -24,6 +25,7 @@ import com.custodycalendar.api.web.dto.CreateChildRequest;
 import com.custodycalendar.api.web.dto.CreateEventRequest;
 import com.custodycalendar.api.web.dto.CreateScheduleProposalRequest;
 import com.custodycalendar.api.web.dto.EventResponse;
+import com.custodycalendar.api.web.dto.LedgerEntryResponse;
 import com.custodycalendar.api.web.dto.LedgerImpactResponse;
 import com.custodycalendar.api.web.dto.OwedBalanceResponse;
 import com.custodycalendar.api.web.dto.ScheduleRuleResponse;
@@ -72,6 +74,7 @@ public class CaseResourceController {
     private final ScheduleProposalService scheduleProposalService;
     private final ScheduleVersionService scheduleVersionService;
     private final SchoolCalendarService schoolCalendarService;
+    private final LedgerService ledgerService;
     private final AuthenticatedUserService authenticatedUserService;
     private final SolverDefaultsProperties solverDefaultsProperties;
     private final ObjectMapper objectMapper;
@@ -82,6 +85,7 @@ public class CaseResourceController {
             ScheduleProposalService scheduleProposalService,
             ScheduleVersionService scheduleVersionService,
             SchoolCalendarService schoolCalendarService,
+            LedgerService ledgerService,
             AuthenticatedUserService authenticatedUserService,
             SolverDefaultsProperties solverDefaultsProperties,
             ObjectMapper objectMapper) {
@@ -90,6 +94,7 @@ public class CaseResourceController {
         this.scheduleProposalService = scheduleProposalService;
         this.scheduleVersionService = scheduleVersionService;
         this.schoolCalendarService = schoolCalendarService;
+        this.ledgerService = ledgerService;
         this.authenticatedUserService = authenticatedUserService;
         this.solverDefaultsProperties = solverDefaultsProperties;
         this.objectMapper = objectMapper;
@@ -286,6 +291,36 @@ public class CaseResourceController {
                         day.getAssignedParentId(),
                         day.getLockedSourceEventId(),
                         day.getDerivedFrom()))
+                .toList();
+    }
+
+    @GetMapping("/ledger")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<LedgerEntryResponse> listLedgerEntries(@PathVariable UUID caseId) {
+        return ledgerService.listEntries(caseId).stream()
+                .map(entry -> new LedgerEntryResponse(
+                        entry.getId(),
+                        entry.getDate(),
+                        entry.getFromParentId(),
+                        entry.getToParentId(),
+                        entry.getAmountDays(),
+                        entry.getReasonType() == null ? null : entry.getReasonType().name(),
+                        entry.getDayBucket() == null ? null : entry.getDayBucket().name(),
+                        entry.getEventId(),
+                        entry.getVersionId(),
+                        entry.getNotes()))
+                .toList();
+    }
+
+    @GetMapping("/ledger/balance")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<OwedBalanceResponse> getLedgerBalance(@PathVariable UUID caseId) {
+        return ledgerService.computeBalances(caseId).stream()
+                .map(balance -> new OwedBalanceResponse(
+                        balance.fromParentId(),
+                        balance.toParentId(),
+                        balance.amountDays(),
+                        balance.dayBucket() == null ? null : balance.dayBucket().name()))
                 .toList();
     }
 

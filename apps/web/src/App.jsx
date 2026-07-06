@@ -3,7 +3,7 @@ import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/c
 import { apiRequest } from "./api.js";
 
 // ── Constants ──
-const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve"];
+const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve", "Ledger"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const defaultSettings = {
@@ -147,6 +147,8 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [previewProposalId, setPreviewProposalId] = useState(null);
   const [identities, setIdentities] = useState([]);
   const [linkForm, setLinkForm] = useState({ externalSubject: "", label: "" });
+  const [ledgerEntries, setLedgerEntries] = useState([]);
+  const [ledgerBalances, setLedgerBalances] = useState([]);
 
   // Resolved API settings
   function api() {
@@ -212,6 +214,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     if (activeTab === "Calendar") withStatus("Loading calendar", refreshCalendar);
     if (activeTab === "Solve") withStatus("Loading", async () => { await loadMembers(); await loadScheduleRule(); });
     if (activeTab === "Proposals") withStatus("Loading proposals", loadProposals);
+    if (activeTab === "Ledger") withStatus("Loading ledger", async () => { await loadMembers(); await loadLedger(); });
   }, [activeTab, calendarMonth, settings.caseId]);
 
   // ── Status wrapper ──
@@ -358,6 +361,12 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   async function unlinkIdentity(identityId) {
     await apiRequest(`/api/v1/me/identities/${identityId}`, { ...api(), method: "DELETE" });
     await loadIdentities();
+  }
+
+  async function loadLedger() {
+    if (!settings.caseId) return;
+    setLedgerEntries((await apiRequest(`/api/v1/cases/${settings.caseId}/ledger`, api())) || []);
+    setLedgerBalances((await apiRequest(`/api/v1/cases/${settings.caseId}/ledger/balance`, api())) || []);
   }
 
   async function loadProposals() {
@@ -788,6 +797,51 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+      )}
+      {/* ── Ledger Tab ── */}
+      {activeTab === "Ledger" && (
+        <section className="two-col">
+          <div className="panel">
+            <h2>Current Balance</h2>
+            <div className="stack">
+              {ledgerBalances.length === 0 && <div className="empty">Even. Nobody owes any days.</div>}
+              {ledgerBalances.map((b, i) => (
+                <div className="event" key={i}>
+                  <div>
+                    <strong>{personLabel(b.fromParentId)}</strong> owes <strong>{personLabel(b.toParentId)}</strong>{" "}
+                    {b.amountDays} {fmtBucket(b.dayBucket)} day{b.amountDays === 1 ? "" : "s"}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted)" }}>
+              Balances are netted from every entry below. Entries are recorded automatically when an approved
+              proposal changes who has the kids relative to the baseline schedule.
+            </p>
+          </div>
+          <div className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>History</h2>
+              <button onClick={() => withStatus("Refreshing ledger", loadLedger)}>Refresh</button>
+            </div>
+            <div className="event-list">
+              {ledgerEntries.length === 0 && <div className="empty">No ledger entries yet.</div>}
+              {ledgerEntries.map(entry => (
+                <div className="event" key={entry.id}>
+                  <div>
+                    <strong>{entry.date}</strong>{" "}
+                    {personLabel(entry.fromParentId)} &rarr; {personLabel(entry.toParentId)}:{" "}
+                    {entry.amountDays} {fmtBucket(entry.dayBucket)} day{entry.amountDays === 1 ? "" : "s"}
+                    {entry.notes && <div style={{ fontSize: 12, color: "var(--muted)" }}>{entry.notes}</div>}
+                  </div>
+                  <div className="event-meta">
+                    <span>{(entry.reasonType || "").replace(/_/g, " ")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
       )}
