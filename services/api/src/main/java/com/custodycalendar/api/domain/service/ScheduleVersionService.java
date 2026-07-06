@@ -39,6 +39,7 @@ public class ScheduleVersionService {
     private final ScheduleDayRepository scheduleDayRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final ScheduleSolveService scheduleSolveService;
+    private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
 
     public ScheduleVersionService(
@@ -48,6 +49,7 @@ public class ScheduleVersionService {
             ScheduleDayRepository scheduleDayRepository,
             LedgerEntryRepository ledgerEntryRepository,
             ScheduleSolveService scheduleSolveService,
+            AuditLogService auditLogService,
             ObjectMapper objectMapper) {
         this.personRepository = personRepository;
         this.personDirectoryService = personDirectoryService;
@@ -55,6 +57,7 @@ public class ScheduleVersionService {
         this.scheduleDayRepository = scheduleDayRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.scheduleSolveService = scheduleSolveService;
+        this.auditLogService = auditLogService;
         this.objectMapper = objectMapper;
     }
 
@@ -94,6 +97,9 @@ public class ScheduleVersionService {
         if (!ledgerEntries.isEmpty()) {
             ledgerEntryRepository.saveAll(ledgerEntries);
         }
+
+        auditLogService.record(caseId, actor.getId(), "SCHEDULE_ACCEPTED", "SCHEDULE_VERSION", versionId,
+                Map.of("optionId", selected.optionId(), "changedDays", selected.changedDays().size()));
 
         return new AcceptedSolveVersionResult(
                 versionId,

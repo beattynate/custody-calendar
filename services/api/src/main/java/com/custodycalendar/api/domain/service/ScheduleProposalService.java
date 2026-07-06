@@ -40,6 +40,7 @@ public class ScheduleProposalService {
     private final ScheduleProposalApprovalRepository scheduleProposalApprovalRepository;
     private final ScheduleSolveService scheduleSolveService;
     private final ScheduleVersionService scheduleVersionService;
+    private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
 
     public ScheduleProposalService(
@@ -51,6 +52,7 @@ public class ScheduleProposalService {
             ScheduleProposalApprovalRepository scheduleProposalApprovalRepository,
             ScheduleSolveService scheduleSolveService,
             ScheduleVersionService scheduleVersionService,
+            AuditLogService auditLogService,
             ObjectMapper objectMapper) {
         this.caseService = caseService;
         this.personRepository = personRepository;
@@ -60,6 +62,7 @@ public class ScheduleProposalService {
         this.scheduleProposalApprovalRepository = scheduleProposalApprovalRepository;
         this.scheduleSolveService = scheduleSolveService;
         this.scheduleVersionService = scheduleVersionService;
+        this.auditLogService = auditLogService;
         this.objectMapper = objectMapper;
     }
 
@@ -107,6 +110,8 @@ public class ScheduleProposalService {
             scheduleProposalApprovalRepository.save(approval);
         }
 
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_CREATED", "PROPOSAL", proposal.getId(),
+                Map.of("optionId", optionId, "reason", proposal.getReason()));
         return toProposalView(proposal);
     }
 
@@ -152,6 +157,8 @@ public class ScheduleProposalService {
             scheduleProposalRepository.save(proposal);
         }
 
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_APPROVED", "PROPOSAL", proposal.getId(),
+                Map.of("status", proposal.getStatus().name()));
         return toProposalView(proposal);
     }
 
@@ -178,6 +185,7 @@ public class ScheduleProposalService {
 
         proposal.setStatus(ScheduleProposalStatus.REJECTED);
         scheduleProposalRepository.save(proposal);
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_REJECTED", "PROPOSAL", proposal.getId(), null);
         return toProposalView(proposal);
     }
 

@@ -3,7 +3,7 @@ import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/c
 import { apiRequest } from "./api.js";
 
 // ── Constants ──
-const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve", "Ledger"];
+const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve", "Ledger", "Activity"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const defaultSettings = {
@@ -149,6 +149,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [linkForm, setLinkForm] = useState({ externalSubject: "", label: "" });
   const [ledgerEntries, setLedgerEntries] = useState([]);
   const [ledgerBalances, setLedgerBalances] = useState([]);
+  const [auditEntries, setAuditEntries] = useState([]);
 
   // Resolved API settings
   function api() {
@@ -215,6 +216,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     if (activeTab === "Solve") withStatus("Loading", async () => { await loadMembers(); await loadScheduleRule(); });
     if (activeTab === "Proposals") withStatus("Loading proposals", loadProposals);
     if (activeTab === "Ledger") withStatus("Loading ledger", async () => { await loadMembers(); await loadLedger(); });
+    if (activeTab === "Activity") withStatus("Loading activity", async () => { await loadMembers(); await loadAudit(); });
   }, [activeTab, calendarMonth, settings.caseId]);
 
   // ── Status wrapper ──
@@ -330,16 +332,6 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, { ...api(), method: "POST", body: { optionId, reason: "Proposed via web app", solveRequest } });
     setSelectedOption(proposal.proposalId);
     if (proposal.status === "APPROVED") { await refreshCalendar(); return; }
-    const pending = (proposal.approvals || []).find(a => !a.decision);
-    if (pending) {
-      const m = members.find(x => x.personId === pending.personId);
-      if (m) {
-        try {
-          const approved = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`, { ...api(), subjectOverride: m.externalSubject, method: "POST", body: { comment: "Auto-approved" } });
-          if (approved.status === "APPROVED") { await refreshCalendar(); return; }
-        } catch { /* override not enabled */ }
-      }
-    }
     setError("Proposal created. Waiting for other parent to approve.");
     setStatus("Pending Approval");
   }
@@ -361,6 +353,24 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   async function unlinkIdentity(identityId) {
     await apiRequest(`/api/v1/me/identities/${identityId}`, { ...api(), method: "DELETE" });
     await loadIdentities();
+  }
+
+  async function eventAction(eventId, action) {
+    const path = action === "delete"
+      ? `/api/v1/cases/${settings.caseId}/events/${eventId}`
+      : `/api/v1/cases/${settings.caseId}/events/${eventId}/${action}`;
+    await apiRequest(path, { ...api(), method: action === "delete" ? "DELETE" : "POST" });
+    await loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth)));
+  }
+
+  async function ruleChangeAction(action) {
+    await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule/${action}`, { ...api(), method: "POST" });
+    await loadScheduleRule();
+  }
+
+  async function loadAudit() {
+    if (!settings.caseId) return;
+    setAuditEntries((await apiRequest(`/api/v1/cases/${settings.caseId}/audit`, api())) || []);
   }
 
   async function loadLedger() {
@@ -566,6 +576,20 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
           {members.length >= 2 && (
             <>
               <div className="section-title">Schedule Rule</div>
+              {scheduleRule?.pendingChange && (
+                <Field label="Pending Rule Change">
+                  <div className="stack">
+                    <small>
+                      Requested by {personLabel(scheduleRule.changeRequestedBy)}: anchor {scheduleRule.pendingChange.anchorDate},
+                      pattern {scheduleRule.pendingChange.metadata?.pattern || "?"}
+                    </small>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-approve" onClick={() => withStatus("Approving rule change", () => ruleChangeAction("approve"))}>Approve</button>
+                      <button className="btn-reject" onClick={() => withStatus("Rejecting rule change", () => ruleChangeAction("reject"))}>Reject</button>
+                    </div>
+                  </div>
+                </Field>
+              )}
               <Field label="Anchor Date">
                 <input type="date" value={scheduleRuleForm.anchorDate} onChange={e => setScheduleRuleForm(p => ({ ...p, anchorDate: e.target.value }))} />
                 <small>Day 1 of the repeating pattern for Parent A</small>
@@ -638,15 +662,27 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
             <button onClick={() => withStatus("Loading events", () => loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth))))}>Refresh</button>
             <div className="event-list">
               {events.length === 0 && <div className="empty">No events for this month.</div>}
-              {events.map(ev => (
-                <div className="event" key={ev.id}>
-                  <div><strong>{ev.title}</strong><br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span></div>
-                  <div className="event-meta">
-                    <span>{ev.eventType.replace(/_/g, " ")}</span>
-                    <span>{ev.locked ? "Locked" : "Flexible"}</span>
+              {events.map(ev => {
+                const pending = ev.approvalStatus && ev.approvalStatus !== "ACTIVE";
+                return (
+                  <div className="event" key={ev.id}>
+                    <div>
+                      <strong>{ev.title}</strong>
+                      {pending && <span className="status-badge pending" style={{ marginLeft: 8 }}>{ev.approvalStatus.replace(/_/g, " ")}</span>}
+                      <br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span>
+                      <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+                        {pending && <button className="btn-approve" onClick={() => withStatus("Approving event", () => eventAction(ev.id, "approve"))}>Approve</button>}
+                        {pending && <button className="btn-reject" onClick={() => withStatus("Rejecting event", () => eventAction(ev.id, "reject"))}>Reject</button>}
+                        {!pending && <button onClick={() => withStatus("Deleting event", () => eventAction(ev.id, "delete"))}>Delete</button>}
+                      </div>
+                    </div>
+                    <div className="event-meta">
+                      <span>{ev.eventType.replace(/_/g, " ")}</span>
+                      <span>{ev.locked ? "Locked" : "Flexible"}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
           <EventForm members={members} onSubmit={form => withStatus("Creating event", () => submitEvent(form))} />
@@ -800,6 +836,34 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
           </div>
         </section>
       )}
+      {/* ── Activity Tab ── */}
+      {activeTab === "Activity" && (
+        <section>
+          <div className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>Activity</h2>
+              <button onClick={() => withStatus("Refreshing activity", loadAudit)}>Refresh</button>
+            </div>
+            <div className="event-list">
+              {auditEntries.length === 0 && <div className="empty">No activity recorded yet.</div>}
+              {auditEntries.map(entry => (
+                <div className="event" key={entry.id}>
+                  <div>
+                    <strong>{(entry.action || "").replace(/_/g, " ")}</strong>
+                    {entry.details?.title && <span> — {entry.details.title}</span>}
+                    {entry.details?.startDate && <span style={{ color: "var(--muted)" }}> ({entry.details.startDate}{entry.details.endDate && entry.details.endDate !== entry.details.startDate ? ` to ${entry.details.endDate}` : ""})</span>}
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      by {entry.actorName || personLabel(entry.actorPersonId)} · {relativeTime(entry.createdAt)}
+                    </div>
+                  </div>
+                  <div className="event-meta"><span>{entry.entityType}</span></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ── Ledger Tab ── */}
       {activeTab === "Ledger" && (
         <section className="two-col">

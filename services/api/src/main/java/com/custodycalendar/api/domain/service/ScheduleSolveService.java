@@ -1,6 +1,7 @@
 package com.custodycalendar.api.domain.service;
 
 import com.custodycalendar.api.domain.model.Event;
+import com.custodycalendar.api.domain.model.EventApprovalStatus;
 import com.custodycalendar.api.domain.model.LedgerDayBucket;
 import com.custodycalendar.api.domain.model.LedgerEntry;
 import com.custodycalendar.api.domain.model.ScheduleRule;
@@ -80,7 +81,9 @@ public class ScheduleSolveService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Schedule rule is required before solving"));
 
         List<Event> events = eventRepository.findByCaseIdAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByStartDateAsc(
-                caseId, command.horizonEnd(), command.horizonStart());
+                        caseId, command.horizonEnd(), command.horizonStart()).stream()
+                .filter(event -> event.getApprovalStatus() != EventApprovalStatus.PENDING_CREATE)
+                .toList();
 
         ScheduleAssignmentSet baseline = baselineScheduleGenerator.generate(rule, command.horizonStart(), command.horizonEnd());
         ScheduleAssignmentSet lockedBaseline = lockedEventApplier.applyLockedEvents(baseline, events);
