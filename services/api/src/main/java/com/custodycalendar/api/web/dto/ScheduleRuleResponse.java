@@ -12,6 +12,8 @@ public record ScheduleRuleResponse(
         LocalDate anchorDate,
         UUID parentAId,
         UUID parentBId,
-        JsonNode metadata
+        JsonNode metadata,
+        JsonNode pendingChange,
+        UUID changeRequestedBy
 ) {
 }

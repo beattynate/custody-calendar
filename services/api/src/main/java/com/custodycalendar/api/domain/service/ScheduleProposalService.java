@@ -34,29 +34,35 @@ public class ScheduleProposalService {
 
     private final CaseService caseService;
     private final PersonRepository personRepository;
+    private final PersonDirectoryService personDirectoryService;
     private final ScheduleRuleRepository scheduleRuleRepository;
     private final ScheduleProposalRepository scheduleProposalRepository;
     private final ScheduleProposalApprovalRepository scheduleProposalApprovalRepository;
     private final ScheduleSolveService scheduleSolveService;
     private final ScheduleVersionService scheduleVersionService;
+    private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper;
 
     public ScheduleProposalService(
             CaseService caseService,
             PersonRepository personRepository,
+            PersonDirectoryService personDirectoryService,
             ScheduleRuleRepository scheduleRuleRepository,
             ScheduleProposalRepository scheduleProposalRepository,
             ScheduleProposalApprovalRepository scheduleProposalApprovalRepository,
             ScheduleSolveService scheduleSolveService,
             ScheduleVersionService scheduleVersionService,
+            AuditLogService auditLogService,
             ObjectMapper objectMapper) {
         this.caseService = caseService;
         this.personRepository = personRepository;
+        this.personDirectoryService = personDirectoryService;
         this.scheduleRuleRepository = scheduleRuleRepository;
         this.scheduleProposalRepository = scheduleProposalRepository;
         this.scheduleProposalApprovalRepository = scheduleProposalApprovalRepository;
         this.scheduleSolveService = scheduleSolveService;
         this.scheduleVersionService = scheduleVersionService;
+        this.auditLogService = auditLogService;
         this.objectMapper = objectMapper;
     }
 
@@ -104,6 +110,8 @@ public class ScheduleProposalService {
             scheduleProposalApprovalRepository.save(approval);
         }
 
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_CREATED", "PROPOSAL", proposal.getId(),
+                Map.of("optionId", optionId, "reason", proposal.getReason()));
         return toProposalView(proposal);
     }
 
@@ -149,6 +157,8 @@ public class ScheduleProposalService {
             scheduleProposalRepository.save(proposal);
         }
 
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_APPROVED", "PROPOSAL", proposal.getId(),
+                Map.of("status", proposal.getStatus().name()));
         return toProposalView(proposal);
     }
 
@@ -175,6 +185,7 @@ public class ScheduleProposalService {
 
         proposal.setStatus(ScheduleProposalStatus.REJECTED);
         scheduleProposalRepository.save(proposal);
+        auditLogService.record(caseId, actor.getId(), "PROPOSAL_REJECTED", "PROPOSAL", proposal.getId(), null);
         return toProposalView(proposal);
     }
 
@@ -230,8 +241,7 @@ public class ScheduleProposalService {
     }
 
     private Person requirePerson(String externalSubject) {
-        return personRepository.findByExternalSubject(externalSubject)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Authenticated person record not found"));
+        return personDirectoryService.requireBySubject(externalSubject);
     }
 
     private ScheduleRule requireScheduleRule(UUID caseId) {

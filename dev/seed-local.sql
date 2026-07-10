@@ -24,6 +24,13 @@ ON CONFLICT (id) DO UPDATE
 SET external_subject = EXCLUDED.external_subject,
     display_name = EXCLUDED.display_name;
 
+INSERT INTO person_identities (person_id, external_subject, label)
+VALUES
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'dev|parent-a', 'Primary'),
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'dev|parent-b', 'Primary')
+ON CONFLICT (external_subject) DO UPDATE
+SET person_id = EXCLUDED.person_id;
+
 INSERT INTO case_members (case_id, person_id, role)
 VALUES
     ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'ADMIN'),

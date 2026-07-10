@@ -3,7 +3,7 @@ import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/c
 import { apiRequest } from "./api.js";
 
 // ── Constants ──
-const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve"];
+const TABS = ["Calendar", "Events", "School Days", "Proposals", "Solve", "Ledger", "Activity"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const defaultSettings = {
@@ -36,7 +36,10 @@ function persistSettings(s) {
 }
 
 function toDateInput(date) {
-  return date.toISOString().slice(0, 10);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function startOfMonth(date) {
@@ -142,6 +145,13 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [scheduleRuleForm, setScheduleRuleForm] = useState({ anchorDate: "", parentAId: "", parentBId: "", pattern: "AABBAAABBAABBBB" });
   const [proposals, setProposals] = useState([]);
   const [previewProposalId, setPreviewProposalId] = useState(null);
+  const [identities, setIdentities] = useState([]);
+  const [linkForm, setLinkForm] = useState({ externalSubject: "", label: "" });
+  const [ledgerEntries, setLedgerEntries] = useState([]);
+  const [ledgerBalances, setLedgerBalances] = useState([]);
+  const [auditEntries, setAuditEntries] = useState([]);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [feedUrl, setFeedUrl] = useState("");
 
   // Resolved API settings
   function api() {
@@ -194,12 +204,21 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     }
   }, [settings.caseId, settings.token]);
 
+  // Linked logins for the settings drawer
+  useEffect(() => {
+    if (settingsOpen && settings.token) {
+      loadIdentities().catch(() => {});
+    }
+  }, [settingsOpen, settings.token, settings.subjectOverride]);
+
   // Tab data loading
   useEffect(() => {
     if (!settings.caseId) return;
     if (activeTab === "Calendar") withStatus("Loading calendar", refreshCalendar);
     if (activeTab === "Solve") withStatus("Loading", async () => { await loadMembers(); await loadScheduleRule(); });
     if (activeTab === "Proposals") withStatus("Loading proposals", loadProposals);
+    if (activeTab === "Ledger") withStatus("Loading ledger", async () => { await loadMembers(); await loadLedger(); });
+    if (activeTab === "Activity") withStatus("Loading activity", async () => { await loadMembers(); await loadAudit(); });
   }, [activeTab, calendarMonth, settings.caseId]);
 
   // ── Status wrapper ──
@@ -294,8 +313,28 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   }
 
   async function submitEvent(form) {
-    await apiRequest(`/api/v1/cases/${settings.caseId}/events`, { ...api(), method: "POST", body: form });
-    await loadEvents(form.startDate, form.endDate);
+    if (editingEvent) {
+      await apiRequest(`/api/v1/cases/${settings.caseId}/events/${editingEvent.id}`, { ...api(), method: "PUT", body: form });
+      setEditingEvent(null);
+    } else {
+      await apiRequest(`/api/v1/cases/${settings.caseId}/events`, { ...api(), method: "POST", body: form });
+    }
+    await loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth)));
+  }
+
+  async function getFeedUrl(rotate) {
+    const s = api();
+    let data;
+    if (rotate) {
+      data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, { ...s, method: "POST" });
+    } else {
+      try {
+        data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, s);
+      } catch {
+        data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, { ...s, method: "POST" });
+      }
+    }
+    setFeedUrl(`${s.baseUrl}${data.feedPath}`);
   }
 
   async function solveSchedule(form) {
@@ -315,18 +354,68 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
     const proposal = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals`, { ...api(), method: "POST", body: { optionId, reason: "Proposed via web app", solveRequest } });
     setSelectedOption(proposal.proposalId);
     if (proposal.status === "APPROVED") { await refreshCalendar(); return; }
-    const pending = (proposal.approvals || []).find(a => !a.decision);
-    if (pending) {
-      const m = members.find(x => x.personId === pending.personId);
-      if (m) {
-        try {
-          const approved = await apiRequest(`/api/v1/cases/${settings.caseId}/schedule/proposals/${proposal.proposalId}/approve`, { ...api(), subjectOverride: m.externalSubject, method: "POST", body: { comment: "Auto-approved" } });
-          if (approved.status === "APPROVED") { await refreshCalendar(); return; }
-        } catch { /* override not enabled */ }
-      }
-    }
     setError("Proposal created. Waiting for other parent to approve.");
     setStatus("Pending Approval");
+  }
+
+  async function loadIdentities() {
+    if (!settings.token) { setIdentities([]); return; }
+    try { setIdentities((await apiRequest("/api/v1/me/identities", api())) || []); }
+    catch { setIdentities([]); }
+  }
+
+  async function linkIdentity() {
+    const externalSubject = linkForm.externalSubject.trim();
+    if (!externalSubject) throw new Error("The other login's subject is required.");
+    await apiRequest("/api/v1/me/identities", { ...api(), method: "POST", body: { externalSubject, label: linkForm.label.trim() || null } });
+    setLinkForm({ externalSubject: "", label: "" });
+    await loadIdentities();
+  }
+
+  async function unlinkIdentity(identityId) {
+    await apiRequest(`/api/v1/me/identities/${identityId}`, { ...api(), method: "DELETE" });
+    await loadIdentities();
+  }
+
+  async function eventAction(eventId, action) {
+    const path = action === "delete"
+      ? `/api/v1/cases/${settings.caseId}/events/${eventId}`
+      : `/api/v1/cases/${settings.caseId}/events/${eventId}/${action}`;
+    await apiRequest(path, { ...api(), method: action === "delete" ? "DELETE" : "POST" });
+    await loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth)));
+  }
+
+  async function ruleChangeAction(action) {
+    await apiRequest(`/api/v1/cases/${settings.caseId}/schedule-rule/${action}`, { ...api(), method: "POST" });
+    await loadScheduleRule();
+  }
+
+  async function exportIcs() {
+    const s = api();
+    const from = toDateInput(startOfMonth(calendarMonth));
+    const to = toDateInput(addDays(startOfMonth(calendarMonth), 180));
+    const headers = {};
+    if (s.token) headers.Authorization = `Bearer ${s.token}`;
+    if (s.subjectOverride) headers["X-Subject-Override"] = s.subjectOverride;
+    const res = await fetch(`${s.baseUrl}/api/v1/cases/${s.caseId}/schedule.ics?from=${from}&to=${to}`, { headers });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "custody-schedule.ics";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function loadAudit() {
+    if (!settings.caseId) return;
+    setAuditEntries((await apiRequest(`/api/v1/cases/${settings.caseId}/audit`, api())) || []);
+  }
+
+  async function loadLedger() {
+    if (!settings.caseId) return;
+    setLedgerEntries((await apiRequest(`/api/v1/cases/${settings.caseId}/ledger`, api())) || []);
+    setLedgerBalances((await apiRequest(`/api/v1/cases/${settings.caseId}/ledger/balance`, api())) || []);
   }
 
   async function loadProposals() {
@@ -465,6 +554,34 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
             </Field>
           )}
 
+          {settings.token && (
+            <>
+              <div className="section-title">Linked Logins</div>
+              <Field label="Logins that act as me">
+                <div className="stack">
+                  {identities.length === 0 && <small>No person record yet. Create or join a case first.</small>}
+                  {identities.map(idn => (
+                    <span key={idn.id}>
+                      {idn.label || "Login"}: {idn.externalSubject}
+                      {idn.primary ? " (primary)" : idn.current ? " (this login)" : ""}
+                      {!idn.primary && !idn.current && (
+                        <button style={{ marginLeft: 8 }} onClick={() => withStatus("Removing login", () => unlinkIdentity(idn.id))}>Remove</button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Link Another Login">
+                <div className="stack">
+                  <small>Have them sign in on their device, copy "My subject" from their Settings, and paste it here. They will act as you: same calendar, same approvals.</small>
+                  <input value={linkForm.externalSubject} onChange={e => setLinkForm(p => ({ ...p, externalSubject: e.target.value }))} placeholder="Their Clerk subject (user_...)" />
+                  <input value={linkForm.label} onChange={e => setLinkForm(p => ({ ...p, label: e.target.value }))} placeholder="Label (e.g. partner's name)" />
+                  <button onClick={() => withStatus("Linking login", linkIdentity)}>Link Login</button>
+                </div>
+              </Field>
+            </>
+          )}
+
           <div className="section-title">Case Setup</div>
           <Field label="Create New Case">
             <div className="stack">
@@ -498,6 +615,20 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
           {members.length >= 2 && (
             <>
               <div className="section-title">Schedule Rule</div>
+              {scheduleRule?.pendingChange && (
+                <Field label="Pending Rule Change">
+                  <div className="stack">
+                    <small>
+                      Requested by {personLabel(scheduleRule.changeRequestedBy)}: anchor {scheduleRule.pendingChange.anchorDate},
+                      pattern {scheduleRule.pendingChange.metadata?.pattern || "?"}
+                    </small>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-approve" onClick={() => withStatus("Approving rule change", () => ruleChangeAction("approve"))}>Approve</button>
+                      <button className="btn-reject" onClick={() => withStatus("Rejecting rule change", () => ruleChangeAction("reject"))}>Reject</button>
+                    </div>
+                  </div>
+                </Field>
+              )}
               <Field label="Anchor Date">
                 <input type="date" value={scheduleRuleForm.anchorDate} onChange={e => setScheduleRuleForm(p => ({ ...p, anchorDate: e.target.value }))} />
                 <small>Day 1 of the repeating pattern for Parent A</small>
@@ -548,8 +679,17 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               <button onClick={() => setCalendarMonth(new Date())}>Today</button>
               <button onClick={() => setCalendarMonth(addDays(endOfMonth(calendarMonth), 1))}>Next</button>
               <button onClick={() => withStatus("Refreshing", refreshCalendar)}>Refresh</button>
+              <button onClick={() => withStatus("Exporting", exportIcs)} title="Download the next 6 months as an .ics file for Google/Apple Calendar">Export .ics</button>
+              <button onClick={() => withStatus("Getting feed URL", () => getFeedUrl(false))} title="Get a live subscription URL for Google/Apple Calendar">Feed URL</button>
             </div>
           </div>
+          {feedUrl && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", margin: "8px 0" }}>
+              <input readOnly value={feedUrl} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: 12 }} />
+              <button onClick={() => navigator.clipboard?.writeText(feedUrl)}>Copy</button>
+              <button onClick={() => withStatus("Rotating feed", () => getFeedUrl(true))} title="Generate a new URL and invalidate old ones">Rotate</button>
+            </div>
+          )}
           {scheduleRule && (
             <div className="calendar-legend">
               <div className="legend-item"><span className="legend-swatch parent-a" />{personLabel(scheduleRule.parentAId)}</div>
@@ -570,18 +710,36 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
             <button onClick={() => withStatus("Loading events", () => loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth))))}>Refresh</button>
             <div className="event-list">
               {events.length === 0 && <div className="empty">No events for this month.</div>}
-              {events.map(ev => (
-                <div className="event" key={ev.id}>
-                  <div><strong>{ev.title}</strong><br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span></div>
-                  <div className="event-meta">
-                    <span>{ev.eventType.replace(/_/g, " ")}</span>
-                    <span>{ev.locked ? "Locked" : "Flexible"}</span>
+              {events.map(ev => {
+                const pending = ev.approvalStatus && ev.approvalStatus !== "ACTIVE";
+                return (
+                  <div className="event" key={ev.id}>
+                    <div>
+                      <strong>{ev.title}</strong>
+                      {pending && <span className="status-badge pending" style={{ marginLeft: 8 }}>{ev.approvalStatus.replace(/_/g, " ")}</span>}
+                      <br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span>
+                      {ev.pendingChange && (
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                          proposed: {ev.pendingChange.title} {ev.pendingChange.startDate} to {ev.pendingChange.endDate}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+                        {pending && <button className="btn-approve" onClick={() => withStatus("Approving event", () => eventAction(ev.id, "approve"))}>Approve</button>}
+                        {pending && <button className="btn-reject" onClick={() => withStatus("Rejecting event", () => eventAction(ev.id, "reject"))}>Reject</button>}
+                        <button onClick={() => setEditingEvent(ev)}>Edit</button>
+                        {!pending && <button onClick={() => withStatus("Deleting event", () => eventAction(ev.id, "delete"))}>Delete</button>}
+                      </div>
+                    </div>
+                    <div className="event-meta">
+                      <span>{ev.eventType.replace(/_/g, " ")}</span>
+                      <span>{ev.locked ? "Locked" : "Flexible"}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
-          <EventForm members={members} onSubmit={form => withStatus("Creating event", () => submitEvent(form))} />
+          <EventForm members={members} initial={editingEvent} onCancel={() => setEditingEvent(null)} onSubmit={form => withStatus(editingEvent ? "Saving event" : "Creating event", () => submitEvent(form))} />
         </section>
       )}
 
@@ -732,20 +890,105 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
           </div>
         </section>
       )}
+      {/* ── Activity Tab ── */}
+      {activeTab === "Activity" && (
+        <section>
+          <div className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>Activity</h2>
+              <button onClick={() => withStatus("Refreshing activity", loadAudit)}>Refresh</button>
+            </div>
+            <div className="event-list">
+              {auditEntries.length === 0 && <div className="empty">No activity recorded yet.</div>}
+              {auditEntries.map(entry => (
+                <div className="event" key={entry.id}>
+                  <div>
+                    <strong>{(entry.action || "").replace(/_/g, " ")}</strong>
+                    {entry.details?.title && <span> — {entry.details.title}</span>}
+                    {entry.details?.startDate && <span style={{ color: "var(--muted)" }}> ({entry.details.startDate}{entry.details.endDate && entry.details.endDate !== entry.details.startDate ? ` to ${entry.details.endDate}` : ""})</span>}
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      by {entry.actorName || personLabel(entry.actorPersonId)} · {relativeTime(entry.createdAt)}
+                    </div>
+                  </div>
+                  <div className="event-meta"><span>{entry.entityType}</span></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ── Ledger Tab ── */}
+      {activeTab === "Ledger" && (
+        <section className="two-col">
+          <div className="panel">
+            <h2>Current Balance</h2>
+            <div className="stack">
+              {ledgerBalances.length === 0 && <div className="empty">Even. Nobody owes any days.</div>}
+              {ledgerBalances.map((b, i) => (
+                <div className="event" key={i}>
+                  <div>
+                    <strong>{personLabel(b.fromParentId)}</strong> owes <strong>{personLabel(b.toParentId)}</strong>{" "}
+                    {b.amountDays} {fmtBucket(b.dayBucket)} day{b.amountDays === 1 ? "" : "s"}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted)" }}>
+              Balances are netted from every entry below. Entries are recorded automatically when an approved
+              proposal changes who has the kids relative to the baseline schedule.
+            </p>
+          </div>
+          <div className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>History</h2>
+              <button onClick={() => withStatus("Refreshing ledger", loadLedger)}>Refresh</button>
+            </div>
+            <div className="event-list">
+              {ledgerEntries.length === 0 && <div className="empty">No ledger entries yet.</div>}
+              {ledgerEntries.map(entry => (
+                <div className="event" key={entry.id}>
+                  <div>
+                    <strong>{entry.date}</strong>{" "}
+                    {personLabel(entry.fromParentId)} &rarr; {personLabel(entry.toParentId)}:{" "}
+                    {entry.amountDays} {fmtBucket(entry.dayBucket)} day{entry.amountDays === 1 ? "" : "s"}
+                    {entry.notes && <div style={{ fontSize: 12, color: "var(--muted)" }}>{entry.notes}</div>}
+                  </div>
+                  <div className="event-meta">
+                    <span>{(entry.reasonType || "").replace(/_/g, " ")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
 
 // ── Sub-components ──
 
-function EventForm({ members, onSubmit }) {
-  const [form, setForm] = useState({
+function EventForm({ members, onSubmit, initial, onCancel }) {
+  const blankForm = () => ({
     title: "", startDate: toDateInput(new Date()), endDate: toDateInput(addDays(new Date(), 2)),
     eventType: "VACATION_WITH_KIDS", appliesTo: "KIDS_ASSIGNMENT", parentId: "", locked: false, recurrenceRule: "", notes: ""
   });
+  const [form, setForm] = useState(blankForm);
+  useEffect(() => {
+    if (initial) {
+      setForm({
+        title: initial.title || "", startDate: initial.startDate, endDate: initial.endDate,
+        eventType: initial.eventType, appliesTo: initial.appliesTo, parentId: initial.parentId || "",
+        locked: !!initial.locked, recurrenceRule: initial.recurrenceRule || "", notes: initial.notes || ""
+      });
+    } else {
+      setForm(blankForm());
+    }
+  }, [initial]);
   return (
     <div className="panel">
-      <h2>Add Event</h2>
+      <h2>{initial ? `Edit: ${initial.title}` : "Add Event"}</h2>
       <div className="form-grid">
         <Field label="Title"><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Spring Break" /></Field>
         <Field label="Start"><input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
@@ -769,7 +1012,11 @@ function EventForm({ members, onSubmit }) {
         </Field>
         <Field label="Notes"><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional" /></Field>
       </div>
-      <button className="primary" onClick={() => onSubmit(form)}>Create Event</button>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button className="primary" onClick={() => onSubmit(form)}>{initial ? "Save Changes" : "Create Event"}</button>
+        {initial && <button onClick={onCancel}>Cancel</button>}
+      </div>
+      {initial?.locked && <small style={{ color: "var(--muted)" }}>Changes to locked events need the other parent's approval.</small>}
     </div>
   );
 }

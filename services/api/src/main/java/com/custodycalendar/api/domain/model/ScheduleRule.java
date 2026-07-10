@@ -86,6 +86,29 @@ public class ScheduleRule {
         this.parentBId = parentBId;
     }
 
+    @Column(name = "pending_change", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String pendingChange;
+
+    @Column(name = "change_requested_by")
+    private UUID changeRequestedBy;
+
+    public String getPendingChange() {
+        return pendingChange;
+    }
+
+    public void setPendingChange(String pendingChange) {
+        this.pendingChange = pendingChange;
+    }
+
+    public UUID getChangeRequestedBy() {
+        return changeRequestedBy;
+    }
+
+    public void setChangeRequestedBy(UUID changeRequestedBy) {
+        this.changeRequestedBy = changeRequestedBy;
+    }
+
     public String getMetadata() {
         return metadata;
     }

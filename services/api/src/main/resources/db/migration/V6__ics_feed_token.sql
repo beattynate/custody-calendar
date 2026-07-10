@@ -1,0 +1,1 @@
+ALTER TABLE cases ADD COLUMN ics_feed_token TEXT UNIQUE;

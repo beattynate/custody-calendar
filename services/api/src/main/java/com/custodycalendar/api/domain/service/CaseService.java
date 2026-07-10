@@ -7,7 +7,6 @@ import com.custodycalendar.api.domain.model.CaseMember;
 import com.custodycalendar.api.domain.model.CaseMemberId;
 import com.custodycalendar.api.domain.repository.CaseMemberRepository;
 import com.custodycalendar.api.domain.repository.CustodyCaseRepository;
-import com.custodycalendar.api.domain.repository.PersonRepository;
 import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -25,16 +24,16 @@ import org.springframework.http.HttpStatus;
 public class CaseService {
 
     private final CustodyCaseRepository custodyCaseRepository;
-    private final PersonRepository personRepository;
     private final CaseMemberRepository caseMemberRepository;
+    private final PersonDirectoryService personDirectoryService;
 
     public CaseService(
             CustodyCaseRepository custodyCaseRepository,
-            PersonRepository personRepository,
-            CaseMemberRepository caseMemberRepository) {
+            CaseMemberRepository caseMemberRepository,
+            PersonDirectoryService personDirectoryService) {
         this.custodyCaseRepository = custodyCaseRepository;
-        this.personRepository = personRepository;
         this.caseMemberRepository = caseMemberRepository;
+        this.personDirectoryService = personDirectoryService;
     }
 
     @Transactional
@@ -47,15 +46,9 @@ public class CaseService {
         custodyCase.setTimezone(timezone);
         CustodyCase savedCase = custodyCaseRepository.save(custodyCase);
 
-        Person person = personRepository.findByExternalSubject(creatorSubject)
-                .orElseGet(() -> {
-                    Person created = new Person();
-                    created.setId(UUID.randomUUID());
-                    created.setExternalSubject(creatorSubject);
-                    return created;
-                });
-        person.setDisplayName((creatorDisplayName == null || creatorDisplayName.isBlank()) ? creatorSubject : creatorDisplayName);
-        Person savedPerson = personRepository.save(person);
+        Person savedPerson = personDirectoryService.ensurePerson(
+                creatorSubject,
+                (creatorDisplayName == null || creatorDisplayName.isBlank()) ? creatorSubject : creatorDisplayName);
 
         CaseMemberId memberId = new CaseMemberId();
         memberId.setCaseId(savedCase.getId());
@@ -75,7 +68,7 @@ public class CaseService {
     }
 
     public List<CustodyCase> listCasesForSubject(String externalSubject) {
-        Optional<Person> person = personRepository.findByExternalSubject(externalSubject);
+        Optional<Person> person = personDirectoryService.findBySubject(externalSubject);
         if (person.isEmpty()) {
             return List.of();
         }

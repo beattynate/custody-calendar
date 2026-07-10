@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.UUID;
 import com.custodycalendar.api.config.SchoolNightProperties;
+import com.custodycalendar.api.domain.model.SchoolDayType;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -35,6 +36,17 @@ public class Scorer {
             SolverWeights weights,
             int owedImbalanceDays,
             Set<LocalDate> transitionExcludedDates) {
+        return score(candidate, baseline, lockedBaseline, weights, owedImbalanceDays, transitionExcludedDates, Collections.emptyMap());
+    }
+
+    public ScoreResult score(
+            ScheduleAssignmentSet candidate,
+            ScheduleAssignmentSet baseline,
+            ScheduleAssignmentSet lockedBaseline,
+            SolverWeights weights,
+            int owedImbalanceDays,
+            Set<LocalDate> transitionExcludedDates,
+            Map<LocalDate, SchoolDayType> schoolDayTypes) {
         int transitions = 0;
         int schoolNightTransitions = 0;
         int parityDrift = 0;
@@ -67,7 +79,7 @@ public class Scorer {
                     && !previous.equals(candidateParent)
                     && (transitionExcludedDates == null || !transitionExcludedDates.contains(date))) {
                 transitions++;
-                if (isSchoolNightTransition(date)) {
+                if (isSchoolNightTransition(date, schoolDayTypes)) {
                     schoolNightTransitions++;
                 }
             }
@@ -97,7 +109,16 @@ public class Scorer {
         return new ScoreResult(total, Map.copyOf(breakdown), Map.copyOf(details));
     }
 
-    private boolean isSchoolNightTransition(LocalDate nextDate) {
+    /**
+     * Prefers the case's own school calendar (a transition landing on a
+     * SCHOOL day counts); the configured school-year window is only a
+     * fallback for dates the calendar does not cover.
+     */
+    private boolean isSchoolNightTransition(LocalDate nextDate, Map<LocalDate, SchoolDayType> schoolDayTypes) {
+        SchoolDayType dayType = schoolDayTypes == null ? null : schoolDayTypes.get(nextDate);
+        if (dayType != null) {
+            return dayType == SchoolDayType.SCHOOL;
+        }
         return schoolNightProperties.isSchoolNight(nextDate);
     }
 

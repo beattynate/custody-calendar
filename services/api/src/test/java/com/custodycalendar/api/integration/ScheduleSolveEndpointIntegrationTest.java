@@ -2,6 +2,7 @@ package com.custodycalendar.api.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -160,6 +161,15 @@ class ScheduleSolveEndpointIntegrationTest extends BaseIntegrationTest {
                 versionId);
         assertThat(preferences).contains("scoreBreakdown");
         assertThat(preferences).contains("changedDays");
+
+        mockMvc.perform(get("/api/v1/cases/{caseId}/ledger", fixture.caseId)
+                        .with(jwt().jwt(jwt -> jwt.subject("auth0|parent-a").claim("name", "Parent A"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+        mockMvc.perform(get("/api/v1/cases/{caseId}/ledger/balance", fixture.caseId)
+                        .with(jwt().jwt(jwt -> jwt.subject("auth0|parent-a").claim("name", "Parent A"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
     }
 
     private String solveRequestJson(Fixture fixture) {

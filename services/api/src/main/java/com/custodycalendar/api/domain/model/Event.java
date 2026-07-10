@@ -7,7 +7,10 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "events")
@@ -47,6 +50,74 @@ public class Event {
 
     @Column
     private String notes;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", nullable = false)
+    private EventApprovalStatus approvalStatus = EventApprovalStatus.ACTIVE;
+
+    @Column(name = "created_by")
+    private UUID createdBy;
+
+    @Column(name = "change_requested_by")
+    private UUID changeRequestedBy;
+
+    @Column(name = "pending_change", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String pendingChange;
+
+    @Column(name = "decided_by")
+    private UUID decidedBy;
+
+    @Column(name = "decided_at")
+    private OffsetDateTime decidedAt;
+
+    public EventApprovalStatus getApprovalStatus() {
+        return approvalStatus;
+    }
+
+    public void setApprovalStatus(EventApprovalStatus approvalStatus) {
+        this.approvalStatus = approvalStatus;
+    }
+
+    public UUID getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(UUID createdBy) {
+        this.createdBy = createdBy;
+    }
+
+    public UUID getChangeRequestedBy() {
+        return changeRequestedBy;
+    }
+
+    public void setChangeRequestedBy(UUID changeRequestedBy) {
+        this.changeRequestedBy = changeRequestedBy;
+    }
+
+    public String getPendingChange() {
+        return pendingChange;
+    }
+
+    public void setPendingChange(String pendingChange) {
+        this.pendingChange = pendingChange;
+    }
+
+    public UUID getDecidedBy() {
+        return decidedBy;
+    }
+
+    public void setDecidedBy(UUID decidedBy) {
+        this.decidedBy = decidedBy;
+    }
+
+    public OffsetDateTime getDecidedAt() {
+        return decidedAt;
+    }
+
+    public void setDecidedAt(OffsetDateTime decidedAt) {
+        this.decidedAt = decidedAt;
+    }
 
     public UUID getId() {
         return id;

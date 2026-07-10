@@ -4,7 +4,13 @@ import com.custodycalendar.api.config.SolverDefaultsProperties;
 import com.custodycalendar.api.domain.model.Child;
 import com.custodycalendar.api.domain.model.Event;
 import com.custodycalendar.api.domain.model.ScheduleRule;
+import com.custodycalendar.api.domain.model.Person;
+import com.custodycalendar.api.domain.repository.PersonRepository;
+import com.custodycalendar.api.domain.service.AuditLogService;
 import com.custodycalendar.api.domain.service.CaseResourceService;
+import com.custodycalendar.api.domain.service.PersonDirectoryService;
+import com.custodycalendar.api.domain.service.LedgerService;
+import com.custodycalendar.api.domain.service.ScheduleIcsService;
 import com.custodycalendar.api.domain.service.ScheduleProposalService;
 import com.custodycalendar.api.domain.service.ScheduleSolveService;
 import com.custodycalendar.api.domain.service.ScheduleVersionService;
@@ -17,6 +23,7 @@ import com.custodycalendar.api.domain.solver.SolverWeights;
 import com.custodycalendar.api.security.AuthenticatedUserService;
 import com.custodycalendar.api.security.AuthenticatedUserService.AuthenticatedUser;
 import com.custodycalendar.api.web.dto.AddCaseMemberRequest;
+import com.custodycalendar.api.web.dto.AuditEntryResponse;
 import com.custodycalendar.api.web.dto.ChangedDayResponse;
 import com.custodycalendar.api.web.dto.CaseMemberResponse;
 import com.custodycalendar.api.web.dto.ChildResponse;
@@ -24,6 +31,7 @@ import com.custodycalendar.api.web.dto.CreateChildRequest;
 import com.custodycalendar.api.web.dto.CreateEventRequest;
 import com.custodycalendar.api.web.dto.CreateScheduleProposalRequest;
 import com.custodycalendar.api.web.dto.EventResponse;
+import com.custodycalendar.api.web.dto.LedgerEntryResponse;
 import com.custodycalendar.api.web.dto.LedgerImpactResponse;
 import com.custodycalendar.api.web.dto.OwedBalanceResponse;
 import com.custodycalendar.api.web.dto.ScheduleRuleResponse;
@@ -45,12 +53,14 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -72,7 +82,12 @@ public class CaseResourceController {
     private final ScheduleProposalService scheduleProposalService;
     private final ScheduleVersionService scheduleVersionService;
     private final SchoolCalendarService schoolCalendarService;
+    private final LedgerService ledgerService;
+    private final ScheduleIcsService scheduleIcsService;
+    private final AuditLogService auditLogService;
     private final AuthenticatedUserService authenticatedUserService;
+    private final PersonDirectoryService personDirectoryService;
+    private final PersonRepository personRepository;
     private final SolverDefaultsProperties solverDefaultsProperties;
     private final ObjectMapper objectMapper;
 
@@ -82,7 +97,12 @@ public class CaseResourceController {
             ScheduleProposalService scheduleProposalService,
             ScheduleVersionService scheduleVersionService,
             SchoolCalendarService schoolCalendarService,
+            LedgerService ledgerService,
+            ScheduleIcsService scheduleIcsService,
+            AuditLogService auditLogService,
             AuthenticatedUserService authenticatedUserService,
+            PersonDirectoryService personDirectoryService,
+            PersonRepository personRepository,
             SolverDefaultsProperties solverDefaultsProperties,
             ObjectMapper objectMapper) {
         this.caseResourceService = caseResourceService;
@@ -90,7 +110,12 @@ public class CaseResourceController {
         this.scheduleProposalService = scheduleProposalService;
         this.scheduleVersionService = scheduleVersionService;
         this.schoolCalendarService = schoolCalendarService;
+        this.ledgerService = ledgerService;
+        this.scheduleIcsService = scheduleIcsService;
+        this.auditLogService = auditLogService;
         this.authenticatedUserService = authenticatedUserService;
+        this.personDirectoryService = personDirectoryService;
+        this.personRepository = personRepository;
         this.solverDefaultsProperties = solverDefaultsProperties;
         this.objectMapper = objectMapper;
     }
@@ -98,8 +123,8 @@ public class CaseResourceController {
     @PostMapping("/people")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
-    public CaseMemberResponse addMember(@PathVariable UUID caseId, @Valid @RequestBody AddCaseMemberRequest request) {
-        var member = caseResourceService.addMember(caseId, request.externalSubject(), request.displayName(), request.role());
+    public CaseMemberResponse addMember(@PathVariable UUID caseId, Authentication authentication, @Valid @RequestBody AddCaseMemberRequest request) {
+        var member = caseResourceService.addMember(caseId, request.externalSubject(), request.displayName(), request.role(), requireActor(authentication).getId());
         return new CaseMemberResponse(member.personId(), member.externalSubject(), member.displayName(), member.role());
     }
 
@@ -131,15 +156,29 @@ public class CaseResourceController {
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
     public ScheduleRuleResponse upsertScheduleRule(
             @PathVariable UUID caseId,
+            Authentication authentication,
             @Valid @RequestBody UpsertScheduleRuleRequest request) {
-        ScheduleRule rule = caseResourceService.upsertScheduleRule(
+        var result = caseResourceService.upsertScheduleRule(
                 caseId,
                 request.type(),
                 request.anchorDate(),
                 request.parentAId(),
                 request.parentBId(),
-                request.metadata());
-        return toScheduleRuleResponse(rule);
+                request.metadata(),
+                requireActor(authentication).getId());
+        return toScheduleRuleResponse(result.rule());
+    }
+
+    @PostMapping("/schedule-rule/approve")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public ScheduleRuleResponse approveScheduleRuleChange(@PathVariable UUID caseId, Authentication authentication) {
+        return toScheduleRuleResponse(caseResourceService.approveScheduleRuleChange(caseId, requireActor(authentication).getId()));
+    }
+
+    @PostMapping("/schedule-rule/reject")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public ScheduleRuleResponse rejectScheduleRuleChange(@PathVariable UUID caseId, Authentication authentication) {
+        return toScheduleRuleResponse(caseResourceService.rejectScheduleRuleChange(caseId, requireActor(authentication).getId()));
     }
 
     @GetMapping("/schedule-rule")
@@ -151,19 +190,43 @@ public class CaseResourceController {
     @PostMapping("/events")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
-    public EventResponse createEvent(@PathVariable UUID caseId, @Valid @RequestBody CreateEventRequest request) {
-        Event event = new Event();
-        event.setTitle(request.title());
-        event.setStartDate(request.startDate());
-        event.setEndDate(request.endDate());
-        event.setEventType(request.eventType());
-        event.setAppliesTo(request.appliesTo());
-        event.setParentId(request.parentId());
-        event.setLocked(request.locked());
-        event.setRecurrenceRule(request.recurrenceRule());
-        event.setNotes(request.notes());
+    public EventResponse createEvent(@PathVariable UUID caseId, Authentication authentication, @Valid @RequestBody CreateEventRequest request) {
+        return toEventResponse(caseResourceService.createEvent(caseId, toEvent(request), requireActor(authentication).getId()));
+    }
 
-        return toEventResponse(caseResourceService.createEvent(caseId, event));
+    @PutMapping("/events/{eventId}")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public EventResponse updateEvent(
+            @PathVariable UUID caseId,
+            @PathVariable UUID eventId,
+            Authentication authentication,
+            @Valid @RequestBody CreateEventRequest request) {
+        return toEventResponse(caseResourceService.updateEvent(caseId, eventId, toEvent(request), requireActor(authentication).getId()));
+    }
+
+    @DeleteMapping("/events/{eventId}")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public org.springframework.http.ResponseEntity<EventResponse> deleteEvent(
+            @PathVariable UUID caseId,
+            @PathVariable UUID eventId,
+            Authentication authentication) {
+        var result = caseResourceService.deleteEvent(caseId, eventId, requireActor(authentication).getId());
+        if (result.deleted()) {
+            return org.springframework.http.ResponseEntity.noContent().build();
+        }
+        return org.springframework.http.ResponseEntity.ok(toEventResponse(result.event()));
+    }
+
+    @PostMapping("/events/{eventId}/approve")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public EventResponse approveEvent(@PathVariable UUID caseId, @PathVariable UUID eventId, Authentication authentication) {
+        return toEventResponse(caseResourceService.approveEvent(caseId, eventId, requireActor(authentication).getId()));
+    }
+
+    @PostMapping("/events/{eventId}/reject")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public EventResponse rejectEvent(@PathVariable UUID caseId, @PathVariable UUID eventId, Authentication authentication) {
+        return toEventResponse(caseResourceService.rejectEvent(caseId, eventId, requireActor(authentication).getId()));
     }
 
     @GetMapping("/events")
@@ -289,6 +352,85 @@ public class CaseResourceController {
                 .toList();
     }
 
+    @GetMapping("/ledger")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<LedgerEntryResponse> listLedgerEntries(@PathVariable UUID caseId) {
+        return ledgerService.listEntries(caseId).stream()
+                .map(entry -> new LedgerEntryResponse(
+                        entry.getId(),
+                        entry.getDate(),
+                        entry.getFromParentId(),
+                        entry.getToParentId(),
+                        entry.getAmountDays(),
+                        entry.getReasonType() == null ? null : entry.getReasonType().name(),
+                        entry.getDayBucket() == null ? null : entry.getDayBucket().name(),
+                        entry.getEventId(),
+                        entry.getVersionId(),
+                        entry.getNotes()))
+                .toList();
+    }
+
+    @GetMapping("/ledger/balance")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<OwedBalanceResponse> getLedgerBalance(@PathVariable UUID caseId) {
+        return ledgerService.computeBalances(caseId).stream()
+                .map(balance -> new OwedBalanceResponse(
+                        balance.fromParentId(),
+                        balance.toParentId(),
+                        balance.amountDays(),
+                        balance.dayBucket() == null ? null : balance.dayBucket().name()))
+                .toList();
+    }
+
+    @GetMapping("/ics-feed")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public Map<String, String> getIcsFeed(@PathVariable UUID caseId) {
+        return Map.of("feedPath", scheduleIcsService.getFeedPath(caseId));
+    }
+
+    @PostMapping("/ics-feed")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public Map<String, String> rotateIcsFeed(@PathVariable UUID caseId, Authentication authentication) {
+        return Map.of("feedPath", scheduleIcsService.rotateFeedToken(caseId, requireActor(authentication).getId()));
+    }
+
+    @GetMapping(value = "/schedule.ics", produces = "text/calendar")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public org.springframework.http.ResponseEntity<String> exportScheduleIcs(
+            @PathVariable UUID caseId,
+            @RequestParam @NotNull @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @NotNull @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=custody-schedule.ics")
+                .body(scheduleIcsService.buildIcs(caseId, from, to));
+    }
+
+    @GetMapping("/audit")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public List<AuditEntryResponse> listAuditEntries(@PathVariable UUID caseId) {
+        var entries = auditLogService.listForCase(caseId);
+        Map<UUID, Person> actors = personRepository.findAllById(
+                        entries.stream()
+                                .map(e -> e.getActorPersonId())
+                                .filter(java.util.Objects::nonNull)
+                                .collect(java.util.stream.Collectors.toSet()))
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(Person::getId, p -> p));
+        return entries.stream()
+                .map(entry -> new AuditEntryResponse(
+                        entry.getId(),
+                        entry.getAction(),
+                        entry.getEntityType(),
+                        entry.getEntityId(),
+                        entry.getActorPersonId(),
+                        entry.getActorPersonId() == null || actors.get(entry.getActorPersonId()) == null
+                                ? null
+                                : actors.get(entry.getActorPersonId()).getDisplayName(),
+                        readJsonOrNull(entry.getDetails()),
+                        entry.getCreatedAt()))
+                .toList();
+    }
+
     @GetMapping("/school-calendar-days")
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
     public List<SchoolCalendarDayResponse> listSchoolCalendarDays(
@@ -328,6 +470,36 @@ public class CaseResourceController {
                 .toList();
     }
 
+    private Person requireActor(Authentication authentication) {
+        AuthenticatedUser user = authenticatedUserService.require(authentication);
+        return personDirectoryService.requireBySubject(user.subject());
+    }
+
+    private Event toEvent(CreateEventRequest request) {
+        Event event = new Event();
+        event.setTitle(request.title());
+        event.setStartDate(request.startDate());
+        event.setEndDate(request.endDate());
+        event.setEventType(request.eventType());
+        event.setAppliesTo(request.appliesTo());
+        event.setParentId(request.parentId());
+        event.setLocked(request.locked());
+        event.setRecurrenceRule(request.recurrenceRule());
+        event.setNotes(request.notes());
+        return event;
+    }
+
+    private JsonNode readJsonOrNull(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
     private ScheduleRuleResponse toScheduleRuleResponse(ScheduleRule rule) {
         JsonNode metadata;
         try {
@@ -343,7 +515,9 @@ public class CaseResourceController {
                 rule.getAnchorDate(),
                 rule.getParentAId(),
                 rule.getParentBId(),
-                metadata);
+                metadata,
+                readJsonOrNull(rule.getPendingChange()),
+                rule.getChangeRequestedBy());
     }
 
     private EventResponse toEventResponse(Event event) {
@@ -358,7 +532,11 @@ public class CaseResourceController {
                 event.getParentId(),
                 event.isLocked(),
                 event.getRecurrenceRule(),
-                event.getNotes());
+                event.getNotes(),
+                event.getApprovalStatus() == null ? null : event.getApprovalStatus().name(),
+                event.getCreatedBy(),
+                event.getChangeRequestedBy(),
+                readJsonOrNull(event.getPendingChange()));
     }
 
     private ScheduleProposalResponse toScheduleProposalResponse(ScheduleProposalService.ProposalView proposal) {

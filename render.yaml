@@ -1,3 +1,20 @@
+# Render Blueprint: provisions the API, static web app, and Postgres.
+# Deploy via Render Dashboard -> New -> Blueprint -> select this repo.
+#
+# Values you must fill in when prompted (sync: false):
+#   JWT_JWK_SET_URI            Clerk JWKS URL, e.g. https://<your-app>.clerk.accounts.dev/.well-known/jwks.json
+#   APP_CORS_ALLOWED_ORIGINS   the web service URL, e.g. https://custody-calendar-web.onrender.com
+#   VITE_CLERK_PUBLISHABLE_KEY Clerk publishable key (pk_...)
+#
+# Note: Render's free Postgres expires after 30 days; upgrade the database
+# plan for long-term use. Never set app.security.allow-subject-override in
+# production.
+
+databases:
+  - name: custody-calendar-db
+    databaseName: custody_calendar
+    plan: free
+
 services:
   - type: web
     name: custody-calendar-api
@@ -7,19 +24,29 @@ services:
     startCommand: java -jar target/*.jar
     healthCheckPath: /api/v1/ping
     envVars:
-      - key: DB_URL
-        sync: false
+      - key: DB_HOST
+        fromDatabase:
+          name: custody-calendar-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: custody-calendar-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: custody-calendar-db
+          property: database
       - key: DB_USERNAME
-        sync: false
+        fromDatabase:
+          name: custody-calendar-db
+          property: user
       - key: DB_PASSWORD
-        sync: false
+        fromDatabase:
+          name: custody-calendar-db
+          property: password
       - key: JWT_JWK_SET_URI
         sync: false
-      - key: app.cors.allowed-origins
-        sync: false
-      - key: app.security.dev-jwks.enabled
-        value: "false"
-      - key: app.security.allow-subject-override
+      - key: APP_CORS_ALLOWED_ORIGINS
         sync: false
 
   - type: web
@@ -28,3 +55,6 @@ services:
     rootDir: apps/web
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    envVars:
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false

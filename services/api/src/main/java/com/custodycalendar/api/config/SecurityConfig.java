@@ -27,7 +27,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/ping", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/dev/jwks").permitAll()
+                        .requestMatchers("/api/v1/ping", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/dev/jwks", "/public/ics/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
 
