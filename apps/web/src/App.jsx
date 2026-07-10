@@ -150,6 +150,8 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   const [ledgerEntries, setLedgerEntries] = useState([]);
   const [ledgerBalances, setLedgerBalances] = useState([]);
   const [auditEntries, setAuditEntries] = useState([]);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [feedUrl, setFeedUrl] = useState("");
 
   // Resolved API settings
   function api() {
@@ -311,8 +313,28 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
   }
 
   async function submitEvent(form) {
-    await apiRequest(`/api/v1/cases/${settings.caseId}/events`, { ...api(), method: "POST", body: form });
-    await loadEvents(form.startDate, form.endDate);
+    if (editingEvent) {
+      await apiRequest(`/api/v1/cases/${settings.caseId}/events/${editingEvent.id}`, { ...api(), method: "PUT", body: form });
+      setEditingEvent(null);
+    } else {
+      await apiRequest(`/api/v1/cases/${settings.caseId}/events`, { ...api(), method: "POST", body: form });
+    }
+    await loadEvents(toDateInput(startOfMonth(calendarMonth)), toDateInput(endOfMonth(calendarMonth)));
+  }
+
+  async function getFeedUrl(rotate) {
+    const s = api();
+    let data;
+    if (rotate) {
+      data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, { ...s, method: "POST" });
+    } else {
+      try {
+        data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, s);
+      } catch {
+        data = await apiRequest(`/api/v1/cases/${s.caseId}/ics-feed`, { ...s, method: "POST" });
+      }
+    }
+    setFeedUrl(`${s.baseUrl}${data.feedPath}`);
   }
 
   async function solveSchedule(form) {
@@ -658,8 +680,16 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               <button onClick={() => setCalendarMonth(addDays(endOfMonth(calendarMonth), 1))}>Next</button>
               <button onClick={() => withStatus("Refreshing", refreshCalendar)}>Refresh</button>
               <button onClick={() => withStatus("Exporting", exportIcs)} title="Download the next 6 months as an .ics file for Google/Apple Calendar">Export .ics</button>
+              <button onClick={() => withStatus("Getting feed URL", () => getFeedUrl(false))} title="Get a live subscription URL for Google/Apple Calendar">Feed URL</button>
             </div>
           </div>
+          {feedUrl && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", margin: "8px 0" }}>
+              <input readOnly value={feedUrl} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: 12 }} />
+              <button onClick={() => navigator.clipboard?.writeText(feedUrl)}>Copy</button>
+              <button onClick={() => withStatus("Rotating feed", () => getFeedUrl(true))} title="Generate a new URL and invalidate old ones">Rotate</button>
+            </div>
+          )}
           {scheduleRule && (
             <div className="calendar-legend">
               <div className="legend-item"><span className="legend-swatch parent-a" />{personLabel(scheduleRule.parentAId)}</div>
@@ -688,9 +718,15 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
                       <strong>{ev.title}</strong>
                       {pending && <span className="status-badge pending" style={{ marginLeft: 8 }}>{ev.approvalStatus.replace(/_/g, " ")}</span>}
                       <br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{ev.startDate} to {ev.endDate}</span>
+                      {ev.pendingChange && (
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                          proposed: {ev.pendingChange.title} {ev.pendingChange.startDate} to {ev.pendingChange.endDate}
+                        </div>
+                      )}
                       <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
                         {pending && <button className="btn-approve" onClick={() => withStatus("Approving event", () => eventAction(ev.id, "approve"))}>Approve</button>}
                         {pending && <button className="btn-reject" onClick={() => withStatus("Rejecting event", () => eventAction(ev.id, "reject"))}>Reject</button>}
+                        <button onClick={() => setEditingEvent(ev)}>Edit</button>
                         {!pending && <button onClick={() => withStatus("Deleting event", () => eventAction(ev.id, "delete"))}>Delete</button>}
                       </div>
                     </div>
@@ -703,7 +739,7 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
               })}
             </div>
           </div>
-          <EventForm members={members} onSubmit={form => withStatus("Creating event", () => submitEvent(form))} />
+          <EventForm members={members} initial={editingEvent} onCancel={() => setEditingEvent(null)} onSubmit={form => withStatus(editingEvent ? "Saving event" : "Creating event", () => submitEvent(form))} />
         </section>
       )}
 
@@ -933,14 +969,26 @@ function AppCore({ clerkConfigured, auth, clerkJwtTemplate }) {
 
 // ── Sub-components ──
 
-function EventForm({ members, onSubmit }) {
-  const [form, setForm] = useState({
+function EventForm({ members, onSubmit, initial, onCancel }) {
+  const blankForm = () => ({
     title: "", startDate: toDateInput(new Date()), endDate: toDateInput(addDays(new Date(), 2)),
     eventType: "VACATION_WITH_KIDS", appliesTo: "KIDS_ASSIGNMENT", parentId: "", locked: false, recurrenceRule: "", notes: ""
   });
+  const [form, setForm] = useState(blankForm);
+  useEffect(() => {
+    if (initial) {
+      setForm({
+        title: initial.title || "", startDate: initial.startDate, endDate: initial.endDate,
+        eventType: initial.eventType, appliesTo: initial.appliesTo, parentId: initial.parentId || "",
+        locked: !!initial.locked, recurrenceRule: initial.recurrenceRule || "", notes: initial.notes || ""
+      });
+    } else {
+      setForm(blankForm());
+    }
+  }, [initial]);
   return (
     <div className="panel">
-      <h2>Add Event</h2>
+      <h2>{initial ? `Edit: ${initial.title}` : "Add Event"}</h2>
       <div className="form-grid">
         <Field label="Title"><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Spring Break" /></Field>
         <Field label="Start"><input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
@@ -964,7 +1012,11 @@ function EventForm({ members, onSubmit }) {
         </Field>
         <Field label="Notes"><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional" /></Field>
       </div>
-      <button className="primary" onClick={() => onSubmit(form)}>Create Event</button>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button className="primary" onClick={() => onSubmit(form)}>{initial ? "Save Changes" : "Create Event"}</button>
+        {initial && <button onClick={onCancel}>Cancel</button>}
+      </div>
+      {initial?.locked && <small style={{ color: "var(--muted)" }}>Changes to locked events need the other parent's approval.</small>}
     </div>
   );
 }

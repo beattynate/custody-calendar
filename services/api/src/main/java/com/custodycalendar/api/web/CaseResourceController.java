@@ -382,6 +382,18 @@ public class CaseResourceController {
                 .toList();
     }
 
+    @GetMapping("/ics-feed")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public Map<String, String> getIcsFeed(@PathVariable UUID caseId) {
+        return Map.of("feedPath", scheduleIcsService.getFeedPath(caseId));
+    }
+
+    @PostMapping("/ics-feed")
+    @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
+    public Map<String, String> rotateIcsFeed(@PathVariable UUID caseId, Authentication authentication) {
+        return Map.of("feedPath", scheduleIcsService.rotateFeedToken(caseId, requireActor(authentication).getId()));
+    }
+
     @GetMapping(value = "/schedule.ics", produces = "text/calendar")
     @PreAuthorize("@caseAccess.canAccess(authentication, #caseId)")
     public org.springframework.http.ResponseEntity<String> exportScheduleIcs(

@@ -19,6 +19,17 @@ public class CustodyCase {
     @Column(nullable = false)
     private String timezone;
 
+    @Column(name = "ics_feed_token", unique = true)
+    private String icsFeedToken;
+
+    public String getIcsFeedToken() {
+        return icsFeedToken;
+    }
+
+    public void setIcsFeedToken(String icsFeedToken) {
+        this.icsFeedToken = icsFeedToken;
+    }
+
     public UUID getId() {
         return id;
     }

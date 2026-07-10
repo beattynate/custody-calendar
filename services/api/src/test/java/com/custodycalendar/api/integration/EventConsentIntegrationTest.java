@@ -133,6 +133,33 @@ class EventConsentIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void icsFeedTokenGrantsPublicAccessUntilRotated() throws Exception {
+        MvcResult rotated = mockMvc.perform(post("/api/v1/cases/{caseId}/ics-feed", caseId).with(asA()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String feedPath = objectMapper.readTree(rotated.getResponse().getContentAsString()).get("feedPath").asText();
+
+        // The feed URL works without any authentication.
+        MvcResult feed = mockMvc.perform(get(feedPath))
+                .andExpect(status().isOk())
+                .andReturn();
+        org.assertj.core.api.Assertions.assertThat(feed.getResponse().getContentAsString())
+                .contains("BEGIN:VCALENDAR")
+                .contains("SUMMARY:Kids with ");
+
+        // Either parent can read the current feed path while signed in.
+        mockMvc.perform(get("/api/v1/cases/{caseId}/ics-feed", caseId).with(asB()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.feedPath").value(feedPath));
+
+        // Rotating invalidates previously shared URLs.
+        mockMvc.perform(post("/api/v1/cases/{caseId}/ics-feed", caseId).with(asB()))
+                .andExpect(status().isOk());
+        mockMvc.perform(get(feedPath))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void nonLockedEventsApplyImmediatelyAndDeleteDirectly() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/cases/{caseId}/events", caseId)
                         .with(asA())
